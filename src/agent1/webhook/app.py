@@ -24,9 +24,18 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     setup_logging(settings.log_level)
 
-    # Connect to DB and Redis on startup
-    await get_pool()
-    await get_redis()
+    # Connect to DB and Redis on startup (retry-tolerant)
+    try:
+        await get_pool()
+        log.info("database_connected")
+    except Exception as exc:
+        log.warning("database_connect_failed", error=str(exc))
+
+    try:
+        await get_redis()
+        log.info("redis_connected")
+    except Exception as exc:
+        log.warning("redis_connect_failed", error=str(exc))
 
     # Register all tools
     from agent1.tools.registry import register_all_tools

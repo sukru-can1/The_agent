@@ -19,5 +19,6 @@ ENV PYTHONPATH=/app/src
 
 EXPOSE 8080
 
-# Run migrations then start webhook server
-CMD ["sh", "-c", "uv run python migrations/migrate.py && uv run python -m uvicorn agent1.webhook.app:create_app --factory --host 0.0.0.0 --port 8080"]
+# Run migrations (allow failure on first deploy) then start webhook server
+# Railway sets PORT env var; default to 8080
+CMD ["sh", "-c", "uv run python migrations/migrate.py || echo 'Migration warning — will retry on next deploy'; exec uv run python -m uvicorn agent1.webhook.app:create_app --factory --host 0.0.0.0 --port ${PORT:-8080}"]
