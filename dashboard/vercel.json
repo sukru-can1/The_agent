@@ -3,11 +3,5 @@
   "framework": "nextjs",
   "buildCommand": "npm run build",
   "installCommand": "npm install",
-  "outputDirectory": ".next",
-  "rewrites": [
-    {
-      "source": "/api/:path*",
-      "destination": "${AGENT_API_URL}/:path*"
-    }
-  ]
+  "outputDirectory": ".next"
 }
