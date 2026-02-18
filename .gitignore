@@ -11,3 +11,8 @@ build/
 uv.lock
 scripts/client_secret.json
 scripts/token.json
+
+# Dashboard
+dashboard/node_modules/
+dashboard/.next/
+dashboard/out/
