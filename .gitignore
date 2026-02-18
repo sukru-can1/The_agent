@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.env
+.venv/
+*.egg-info/
+dist/
+build/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+uv.lock
+scripts/client_secret.json
+scripts/token.json
