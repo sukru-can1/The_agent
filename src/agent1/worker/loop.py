@@ -81,6 +81,11 @@ async def process_event(event: Event) -> None:
         await _handle_teachable_rule(event, start)
         return
 
+    # Step 1c: Handle scheduled summaries
+    if event.event_type in ("morning_brief", "daily_summary"):
+        await _handle_summary_event(event, start)
+        return
+
     # Step 1c: Auto-respond to simple Chat questions
     if (
         event.source == EventSource.GCHAT
@@ -302,3 +307,114 @@ async def _handle_chat_auto_response(
     except Exception:
         log.exception("auto_response_failed", event_id=str(event.id))
         return False
+
+
+async def _handle_summary_event(event: Event, start: float) -> None:
+    """Handle morning_brief and daily_summary events by aggregating stats and posting to Chat."""
+    settings = get_settings()
+    is_morning = event.event_type == "morning_brief"
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        # Events in last 24h
+        events_24h = await conn.fetchval(
+            "SELECT COUNT(*) FROM events WHERE created_at >= NOW() - INTERVAL '24 hours'"
+        )
+        failed_24h = await conn.fetchval(
+            "SELECT COUNT(*) FROM events WHERE status = 'failed' AND created_at >= NOW() - INTERVAL '24 hours'"
+        )
+
+        # Pending drafts
+        pending_drafts = await conn.fetchval(
+            "SELECT COUNT(*) FROM email_drafts WHERE status = 'pending'"
+        )
+
+        # Drafts sent in last 24h
+        sent_24h = await conn.fetchval(
+            "SELECT COUNT(*) FROM email_drafts WHERE status = 'sent' AND sent_at >= NOW() - INTERVAL '24 hours'"
+        )
+
+        # DLQ unresolved
+        dlq_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM dead_letter_events WHERE resolved_at IS NULL"
+        )
+
+        # Top event sources
+        top_sources = await conn.fetch(
+            """
+            SELECT source, COUNT(*) AS count
+            FROM events
+            WHERE created_at >= NOW() - INTERVAL '24 hours'
+            GROUP BY source
+            ORDER BY count DESC
+            LIMIT 5
+            """
+        )
+
+    # Check feedbacks if available
+    complaints_24h = 0
+    try:
+        if settings.feedbacks_database_url:
+            import asyncpg
+
+            fconn = await asyncpg.connect(settings.feedbacks_database_url)
+            try:
+                complaints_24h = await fconn.fetchval(
+                    """
+                    SELECT COUNT(*) FROM "SurveyResponse"
+                    WHERE sentiment = 'negative'
+                      AND "createdAt" >= NOW() - INTERVAL '24 hours'
+                    """
+                ) or 0
+            finally:
+                await fconn.close()
+    except Exception:
+        pass
+
+    # Build summary message
+    title = "Morning Brief" if is_morning else "Daily Summary"
+    sources_str = ", ".join(f"{r['source']}: {r['count']}" for r in top_sources) if top_sources else "none"
+
+    summary = (
+        f"**{title}** ({event.payload.get('date', 'today')})\n\n"
+        f"**Events (24h):** {events_24h} processed, {failed_24h} failed\n"
+        f"**Email Drafts:** {pending_drafts} pending, {sent_24h} sent\n"
+        f"**DLQ:** {dlq_count} unresolved\n"
+        f"**Customer Complaints (24h):** {complaints_24h}\n"
+        f"**Top Sources:** {sources_str}"
+    )
+
+    if dlq_count > 0:
+        summary += f"\n\n:warning: {dlq_count} events in dead-letter queue need attention."
+    if pending_drafts > 3:
+        summary += f"\n\n:warning: {pending_drafts} drafts awaiting approval."
+
+    # Post to Chat
+    try:
+        from agent1.tools.google_chat import GChatPostMessageTool
+
+        chat = GChatPostMessageTool()
+        space = "summary" if not is_morning else "alerts"
+        await chat.execute(space=space, message=summary)
+    except Exception as exc:
+        log.warning("summary_chat_post_failed", error=str(exc))
+
+    elapsed_ms = int((time.monotonic() - start) * 1000)
+    await _log_action(
+        ActionLog(
+            system="scheduler",
+            action_type=event.event_type,
+            details={"events_24h": events_24h, "pending_drafts": pending_drafts, "complaints": complaints_24h},
+            outcome="success",
+            latency_ms=elapsed_ms,
+        ),
+        event_id=str(event.id),
+    )
+
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE events SET status = 'completed', processed_at = NOW() WHERE id = $1",
+            event.id,
+        )
+
+    log.info("summary_event_processed", event_type=event.event_type)

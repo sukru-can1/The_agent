@@ -49,10 +49,40 @@ async def reason_and_act(
         f"\n## Classification\n- Category: {classification.category}\n- Urgency: {classification.urgency.name}\n- Complexity: {classification.complexity.value}\n- VIP: {classification.involves_vip}\n- Financial: {classification.involves_financial}\n- Needs Response: {classification.needs_response}",
     ]
 
+    # Language instruction
+    lang = classification.detected_language
+    if lang and lang != "en":
+        lang_names = {"de": "German", "tr": "Turkish", "fr": "French", "es": "Spanish", "it": "Italian", "nl": "Dutch", "pt": "Portuguese", "pl": "Polish", "ru": "Russian", "ar": "Arabic", "ja": "Japanese", "zh": "Chinese"}
+        lang_name = lang_names.get(lang, lang.upper())
+        context_parts.append(
+            f"\n## Language\nThe message is in **{lang_name}** ({lang}). Draft any response in {lang_name} to match the sender's language."
+        )
+
     if plan:
         context_parts.append(
             f"\n## Plan\n- Actions: {', '.join(plan.get('intended_actions', []))}\n- Reasoning: {plan.get('reasoning', '')}"
         )
+
+    # Inject learned knowledge patterns
+    try:
+        from agent1.common.db import get_pool as _get_pool
+
+        pool = await _get_pool()
+        async with pool.acquire() as conn:
+            knowledge_rows = await conn.fetch(
+                """
+                SELECT content FROM knowledge
+                WHERE active = true
+                  AND category IN ('taught_rule', 'edit_pattern')
+                ORDER BY created_at DESC
+                LIMIT 10
+                """
+            )
+            if knowledge_rows:
+                rules = "\n".join(f"- {r['content']}" for r in knowledge_rows)
+                context_parts.append(f"\n## Learned Rules\n{rules}")
+    except Exception:
+        pass
 
     context = "\n".join(context_parts)
 

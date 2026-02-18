@@ -53,6 +53,31 @@ async def move_to_dlq(event: Event) -> None:
         error=event.error,
     )
 
+    # Alert via Google Chat
+    try:
+        from agent1.tools.chat_cards import build_alert_card
+        from agent1.tools.google_chat import GChatPostMessageTool
+
+        card = build_alert_card(
+            title=f"DLQ: {event.event_type} failed after {event.retry_count} retries",
+            body=f"Source: {event.source.value}\nError: {event.error or 'unknown'}\n\nEvent moved to dead-letter queue after exhausting retries.",
+            source=event.source.value,
+            priority="critical",
+            event_id=str(event.id),
+        )
+        chat = GChatPostMessageTool()
+        import asyncio
+
+        asyncio.ensure_future(
+            chat.execute(
+                space="alerts",
+                message=f"Event {str(event.id)[:8]} moved to DLQ",
+                cards=card,
+            )
+        )
+    except Exception as chat_exc:
+        log.warning("dlq_chat_alert_failed", error=str(chat_exc))
+
 
 async def get_dlq_entries(limit: int = 20) -> list[dict]:
     """Fetch unresolved DLQ entries."""
