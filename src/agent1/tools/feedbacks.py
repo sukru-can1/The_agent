@@ -63,28 +63,31 @@ class FeedbacksGetRecentComplaintsTool(BaseTool):
         if pool is None:
             return {"complaints": [], "message": "Feedbacks DB not configured"}
 
-        days = kwargs.get("days", 7)
-        limit = kwargs.get("limit", 20)
+        days = int(kwargs.get("days", 7))
+        limit = min(int(kwargs.get("limit", 20)), 100)
         country = kwargs.get("country_code")
 
         async with pool.acquire() as conn:
-            query = """
+            params: list = [days, limit]
+            country_filter = ""
+            if country:
+                country_filter = ' AND sr."countryCode" = $3'
+                params.append(country)
+
+            rows = await conn.fetch(
+                f"""
                 SELECT sr.id, sr."customerEmail", sr."customerName", sr.sentiment,
                        sr."taskType", sr."taskStatus", sr."freshdeskTicketId",
                        sr."countryCode", sr."createdAt"
                 FROM "SurveyResponse" sr
                 WHERE sr.sentiment = 'negative'
-                  AND sr."createdAt" > NOW() - INTERVAL '%s days'
-            """ % days
-
-            params = []
-            if country:
-                query += ' AND sr."countryCode" = $1'
-                params.append(country)
-
-            query += f' ORDER BY sr."createdAt" DESC LIMIT {limit}'
-
-            rows = await conn.fetch(query, *params)
+                  AND sr."createdAt" > NOW() - make_interval(days => $1)
+                {country_filter}
+                ORDER BY sr."createdAt" DESC
+                LIMIT $2
+                """,
+                *params,
+            )
         return {"complaints": [dict(r) for r in rows]}
 
 
@@ -106,7 +109,7 @@ class FeedbacksGetCsatSummaryTool(BaseTool):
         if pool is None:
             return {"summary": {}, "message": "Feedbacks DB not configured"}
 
-        days = kwargs.get("days", 30)
+        days = int(kwargs.get("days", 30))
 
         async with pool.acquire() as conn:
             rows = await conn.fetch(
@@ -118,10 +121,11 @@ class FeedbacksGetCsatSummaryTool(BaseTool):
                        ROUND(AVG(a."ratingValue")::numeric, 2) as avg_rating
                 FROM "SurveyResponse" sr
                 LEFT JOIN "Answer" a ON a."responseId" = sr.id AND a."ratingValue" IS NOT NULL
-                WHERE sr."createdAt" > NOW() - INTERVAL '%s days'
+                WHERE sr."createdAt" > NOW() - make_interval(days => $1)
                 GROUP BY sr."countryCode"
                 ORDER BY total DESC
-                """ % days,
+                """,
+                days,
             )
         return {"summary": [dict(r) for r in rows]}
 

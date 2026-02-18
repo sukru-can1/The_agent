@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -155,3 +156,93 @@ async def resume_queue():
     await redis.delete("agent1:queue:paused")
     log.info("queue_resumed")
     return {"status": "resumed"}
+
+
+# --- Draft approval / rejection ---
+
+
+class DraftApproveBody(BaseModel):
+    edited_body: Optional[str] = None
+
+
+@router.post("/drafts/{draft_id}/approve")
+async def approve_draft(draft_id: int, body: DraftApproveBody = DraftApproveBody()):
+    """Approve a pending email draft, optionally with edits.
+
+    If edited_body is provided, it replaces the draft body and triggers
+    feedback learning (edit distance tracking).
+    """
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        draft = await conn.fetchrow(
+            "SELECT * FROM email_drafts WHERE id = $1 AND status = 'pending'",
+            draft_id,
+        )
+        if not draft:
+            raise HTTPException(status_code=404, detail="Draft not found or not pending")
+
+        if body.edited_body and body.edited_body != draft["draft_body"]:
+            # Store the edited version and track feedback
+            await conn.execute(
+                """
+                UPDATE email_drafts
+                SET status = 'approved', edited_body = $2, approved_at = NOW()
+                WHERE id = $1
+                """,
+                draft_id,
+                body.edited_body,
+            )
+
+            # Track the edit for feedback learning
+            try:
+                from agent1.feedback.tracker import track_edit
+                await track_edit(
+                    draft_id=draft_id,
+                    original=draft["draft_body"],
+                    edited=body.edited_body,
+                    sender_domain=_extract_domain(draft["from_address"]),
+                    category=draft["classification"],
+                )
+            except Exception as exc:
+                log.warning("feedback_tracking_failed", error=str(exc))
+        else:
+            await conn.execute(
+                """
+                UPDATE email_drafts
+                SET status = 'approved', approved_at = NOW()
+                WHERE id = $1
+                """,
+                draft_id,
+            )
+
+    log.info("draft_approved", draft_id=draft_id, edited=bool(body.edited_body))
+    return {"status": "approved", "draft_id": draft_id}
+
+
+@router.post("/drafts/{draft_id}/reject")
+async def reject_draft(draft_id: int):
+    """Reject and discard a pending email draft."""
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            """
+            UPDATE email_drafts
+            SET status = 'rejected'
+            WHERE id = $1 AND status = 'pending'
+            """,
+            draft_id,
+        )
+        if result == "UPDATE 0":
+            raise HTTPException(status_code=404, detail="Draft not found or not pending")
+
+    log.info("draft_rejected", draft_id=draft_id)
+    return {"status": "rejected", "draft_id": draft_id}
+
+
+def _extract_domain(email: str | None) -> str | None:
+    """Extract domain from email address."""
+    if not email or "@" not in email:
+        return None
+    return email.split("@")[1].lower()
