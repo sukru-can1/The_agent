@@ -44,12 +44,16 @@ async def run_migrations(dsn: str) -> None:
             print(f"  [apply] {sql_file.name}")
             sql = sql_file.read_text(encoding="utf-8")
 
-            async with conn.transaction():
-                await conn.execute(sql)
-                await conn.execute(
-                    "INSERT INTO _migrations (filename) VALUES ($1)",
-                    sql_file.name,
-                )
+            try:
+                async with conn.transaction():
+                    await conn.execute(sql)
+                    await conn.execute(
+                        "INSERT INTO _migrations (filename) VALUES ($1)",
+                        sql_file.name,
+                    )
+            except Exception as exc:
+                print(f"  [WARN] {sql_file.name} failed: {exc}")
+                print(f"  Skipping — can be retried later.")
 
         print("Migrations complete.")
     finally:

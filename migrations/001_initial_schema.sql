@@ -1,7 +1,5 @@
--- GLAMIRA Ops Agent — Initial Schema
--- Uses pgvector with vector(1024) for Voyage 3 embeddings
+-- GLAMIRA Ops Agent — Initial Schema (core tables, no pgvector dependency)
 
-CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- ============================================================
@@ -59,15 +57,14 @@ CREATE TABLE actions_log (
     input_tokens    INTEGER      DEFAULT 0,
     output_tokens   INTEGER      DEFAULT 0,
     latency_ms      INTEGER      DEFAULT 0,
-    event_id        UUID,
-    embedding       vector(1024)
+    event_id        UUID
 );
 
 CREATE INDEX idx_actions_timestamp ON actions_log(timestamp DESC);
 CREATE INDEX idx_actions_system ON actions_log(system);
 
 -- ============================================================
--- Incidents (past incidents with vector search)
+-- Incidents (past incidents — embedding column added in 002)
 -- ============================================================
 CREATE TABLE incidents (
     id              SERIAL PRIMARY KEY,
@@ -80,16 +77,14 @@ CREATE TABLE incidents (
     resolution_time_minutes INTEGER,
     resolved_at     TIMESTAMPTZ,
     tags            TEXT[]       DEFAULT '{}',
-    metadata        JSONB        DEFAULT '{}',
-    embedding       vector(1024) NOT NULL
+    metadata        JSONB        DEFAULT '{}'
 );
 
 CREATE INDEX idx_incidents_category ON incidents(category);
 CREATE INDEX idx_incidents_market ON incidents(market);
-CREATE INDEX idx_incidents_embedding ON incidents USING hnsw (embedding vector_cosine_ops);
 
 -- ============================================================
--- Knowledge (learned rules with versioning)
+-- Knowledge (learned rules — embedding column added in 002)
 -- ============================================================
 CREATE TABLE knowledge (
     id              SERIAL PRIMARY KEY,
@@ -101,13 +96,11 @@ CREATE TABLE knowledge (
     confidence      FLOAT        DEFAULT 1.0,
     last_validated  TIMESTAMPTZ,
     active          BOOLEAN      DEFAULT TRUE,
-    supersedes_id   INTEGER      REFERENCES knowledge(id),
-    embedding       vector(1024) NOT NULL
+    supersedes_id   INTEGER      REFERENCES knowledge(id)
 );
 
 CREATE INDEX idx_knowledge_category ON knowledge(category);
 CREATE INDEX idx_knowledge_active ON knowledge(active) WHERE active = TRUE;
-CREATE INDEX idx_knowledge_embedding ON knowledge USING hnsw (embedding vector_cosine_ops);
 
 -- ============================================================
 -- Conversations (chat history)
@@ -190,13 +183,4 @@ CREATE TABLE config (
     value           JSONB        NOT NULL,
     updated_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     description     TEXT
-);
-
--- ============================================================
--- Migrations tracking
--- ============================================================
-CREATE TABLE IF NOT EXISTS _migrations (
-    id              SERIAL PRIMARY KEY,
-    filename        VARCHAR(255) NOT NULL UNIQUE,
-    applied_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
