@@ -10,8 +10,8 @@ interface KnowledgeEntry {
   content: string;
   source: string;
   created_at: string;
-  is_active: boolean;
-  version: number;
+  active: boolean;
+  confidence: number;
   supersedes_id: number | null;
 }
 
@@ -147,9 +147,9 @@ export default function KnowledgePage() {
                           <Tag size={10} />
                           {entry.category.replace(/_/g, " ")}
                         </span>
-                        {entry.version > 1 && (
+                        {entry.confidence < 1.0 && (
                           <span className="text-[10px] text-[var(--color-text-dim)]">
-                            v{entry.version}
+                            {(entry.confidence * 100).toFixed(0)}% conf
                           </span>
                         )}
                       </div>

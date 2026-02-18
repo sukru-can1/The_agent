@@ -455,10 +455,10 @@ async def list_knowledge(limit: int = 50):
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT id, category, content, source, created_at, is_active,
-                   version, supersedes_id
+            SELECT id, category, content, source, created_at, active,
+                   confidence, supersedes_id
             FROM knowledge
-            WHERE is_active = true
+            WHERE active = true
             ORDER BY created_at DESC
             LIMIT $1
             """,

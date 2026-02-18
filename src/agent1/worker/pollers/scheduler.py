@@ -65,15 +65,15 @@ async def _run_feedback_analysis() -> None:
                     SELECT id FROM knowledge
                     WHERE category = 'edit_pattern'
                       AND source = $1
-                      AND is_active = true
+                      AND active = true
                     """,
                     f"feedback:{p['sender_domain']}",
                 )
                 if not existing:
                     await conn.execute(
                         """
-                        INSERT INTO knowledge (category, content, source, is_active, version)
-                        VALUES ('edit_pattern', $1, $2, true, 1)
+                        INSERT INTO knowledge (category, content, source, active)
+                        VALUES ('edit_pattern', $1, $2, true)
                         """,
                         f"Drafts for {p['sender_domain']} ({p['category']}) are edited {p['avg_edit_ratio']*100:.0f}% on average. Adjust tone/style accordingly.",
                         f"feedback:{p['sender_domain']}",

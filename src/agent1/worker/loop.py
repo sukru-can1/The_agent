@@ -168,8 +168,8 @@ async def _handle_teachable_rule(event: Event, start: float) -> None:
     async with pool.acquire() as conn:
         await conn.execute(
             """
-            INSERT INTO knowledge (category, content, source, is_active, version)
-            VALUES ('taught_rule', $1, $2, true, 1)
+            INSERT INTO knowledge (category, content, source, active)
+            VALUES ('taught_rule', $1, $2, true)
             """,
             text,
             f"taught_by:{sender}",
@@ -237,7 +237,7 @@ async def _handle_chat_auto_response(
                 rows = await conn.fetch(
                     f"""
                     SELECT content FROM knowledge
-                    WHERE is_active = true AND ({like_clauses})
+                    WHERE active = true AND ({like_clauses})
                     LIMIT 3
                     """,
                     *words,
