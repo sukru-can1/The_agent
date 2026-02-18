@@ -246,3 +246,240 @@ def _extract_domain(email: str | None) -> str | None:
     if not email or "@" not in email:
         return None
     return email.split("@")[1].lower()
+
+
+# --- Analytics ---
+
+
+@router.get("/analytics/daily-costs")
+async def analytics_daily_costs(days: int = 30):
+    """Daily model cost breakdown from actions_log token counts."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT DATE(timestamp) AS day,
+                   model_used,
+                   COUNT(*) AS calls,
+                   SUM(input_tokens) AS input_tokens,
+                   SUM(output_tokens) AS output_tokens
+            FROM actions_log
+            WHERE timestamp >= NOW() - make_interval(days => $1)
+              AND model_used IS NOT NULL AND model_used != ''
+            GROUP BY DATE(timestamp), model_used
+            ORDER BY day DESC, model_used
+            """,
+            days,
+        )
+
+    # Compute estimated costs per model
+    cost_map = {
+        "claude-3-5-haiku-20241022": {"input": 1.0, "output": 5.0},
+        "claude-sonnet-4-20250514": {"input": 3.0, "output": 15.0},
+        "claude-opus-4-20250514": {"input": 15.0, "output": 75.0},
+    }
+
+    results = []
+    for r in rows:
+        model = r["model_used"]
+        rates = cost_map.get(model, {"input": 3.0, "output": 15.0})
+        cost = (r["input_tokens"] * rates["input"] + r["output_tokens"] * rates["output"]) / 1_000_000
+        results.append({
+            "day": str(r["day"]),
+            "model": model,
+            "calls": r["calls"],
+            "input_tokens": r["input_tokens"],
+            "output_tokens": r["output_tokens"],
+            "estimated_cost_usd": round(cost, 4),
+        })
+    return results
+
+
+@router.get("/analytics/approval-rate")
+async def analytics_approval_rate(days: int = 30):
+    """Draft approval, rejection, and edit rates."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT DATE(created_at) AS day,
+                   status,
+                   COUNT(*) AS count
+            FROM email_drafts
+            WHERE created_at >= NOW() - make_interval(days => $1)
+            GROUP BY DATE(created_at), status
+            ORDER BY day DESC
+            """,
+            days,
+        )
+
+        # Edits ratio (drafts that were edited before approval)
+        edit_stats = await conn.fetchrow(
+            """
+            SELECT COUNT(*) FILTER (WHERE edited_body IS NOT NULL) AS edited,
+                   COUNT(*) AS total
+            FROM email_drafts
+            WHERE created_at >= NOW() - make_interval(days => $1)
+              AND status IN ('approved', 'sent')
+            """,
+            days,
+        )
+
+    by_day: dict[str, dict] = {}
+    for r in rows:
+        day = str(r["day"])
+        if day not in by_day:
+            by_day[day] = {"day": day, "approved": 0, "rejected": 0, "pending": 0, "sent": 0}
+        by_day[day][r["status"]] = r["count"]
+
+    return {
+        "daily": list(by_day.values()),
+        "edit_rate": {
+            "edited": edit_stats["edited"] if edit_stats else 0,
+            "total": edit_stats["total"] if edit_stats else 0,
+            "ratio": round(edit_stats["edited"] / max(edit_stats["total"], 1), 3) if edit_stats else 0,
+        },
+    }
+
+
+@router.get("/analytics/response-time")
+async def analytics_response_time(days: int = 30):
+    """Average response/processing time from actions_log."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT DATE(timestamp) AS day,
+                   system,
+                   COUNT(*) AS count,
+                   AVG(latency_ms) AS avg_latency_ms,
+                   MAX(latency_ms) AS max_latency_ms,
+                   PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms) AS p95_latency_ms
+            FROM actions_log
+            WHERE timestamp >= NOW() - make_interval(days => $1)
+              AND latency_ms > 0
+            GROUP BY DATE(timestamp), system
+            ORDER BY day DESC
+            """,
+            days,
+        )
+    return [
+        {
+            "day": str(r["day"]),
+            "system": r["system"],
+            "count": r["count"],
+            "avg_latency_ms": round(float(r["avg_latency_ms"]), 1),
+            "max_latency_ms": r["max_latency_ms"],
+            "p95_latency_ms": round(float(r["p95_latency_ms"]), 1) if r["p95_latency_ms"] else None,
+        }
+        for r in rows
+    ]
+
+
+@router.get("/analytics/summary")
+async def analytics_summary():
+    """Overall analytics summary — events processed, costs, drafts, errors."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        # Events today
+        events_today = await conn.fetchval(
+            "SELECT COUNT(*) FROM events WHERE created_at >= CURRENT_DATE"
+        )
+        events_week = await conn.fetchval(
+            "SELECT COUNT(*) FROM events WHERE created_at >= CURRENT_DATE - INTERVAL '7 days'"
+        )
+
+        # Drafts
+        drafts_pending = await conn.fetchval(
+            "SELECT COUNT(*) FROM email_drafts WHERE status = 'pending'"
+        )
+        drafts_sent = await conn.fetchval(
+            "SELECT COUNT(*) FROM email_drafts WHERE status = 'sent' AND created_at >= CURRENT_DATE - INTERVAL '7 days'"
+        )
+
+        # Errors
+        failed_today = await conn.fetchval(
+            "SELECT COUNT(*) FROM events WHERE status = 'failed' AND created_at >= CURRENT_DATE"
+        )
+        dlq_unresolved = await conn.fetchval(
+            "SELECT COUNT(*) FROM dead_letter_events WHERE resolved_at IS NULL"
+        )
+
+        # Token usage today
+        tokens = await conn.fetchrow(
+            """
+            SELECT COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                   COALESCE(SUM(output_tokens), 0) AS output_tokens
+            FROM actions_log
+            WHERE timestamp >= CURRENT_DATE
+            """
+        )
+
+        # Top event types this week
+        top_types = await conn.fetch(
+            """
+            SELECT event_type, source, COUNT(*) AS count
+            FROM events
+            WHERE created_at >= CURRENT_DATE - INTERVAL '7 days'
+            GROUP BY event_type, source
+            ORDER BY count DESC
+            LIMIT 10
+            """
+        )
+
+    return {
+        "events": {
+            "today": events_today,
+            "this_week": events_week,
+        },
+        "drafts": {
+            "pending": drafts_pending,
+            "sent_this_week": drafts_sent,
+        },
+        "errors": {
+            "failed_today": failed_today,
+            "dlq_unresolved": dlq_unresolved,
+        },
+        "tokens_today": {
+            "input": tokens["input_tokens"] if tokens else 0,
+            "output": tokens["output_tokens"] if tokens else 0,
+        },
+        "top_event_types": [dict(r) for r in top_types],
+    }
+
+
+@router.get("/knowledge")
+async def list_knowledge(limit: int = 50):
+    """List knowledge base entries."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, category, content, source, created_at, is_active,
+                   version, supersedes_id
+            FROM knowledge
+            WHERE is_active = true
+            ORDER BY created_at DESC
+            LIMIT $1
+            """,
+            limit,
+        )
+    return [dict(r) for r in rows]
+
+
+@router.get("/actions")
+async def list_actions(limit: int = 50):
+    """List recent agent actions (audit log)."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, timestamp, system, action_type, outcome,
+                   model_used, input_tokens, output_tokens, latency_ms
+            FROM actions_log
+            ORDER BY timestamp DESC
+            LIMIT $1
+            """,
+            limit,
+        )
+    return [dict(r) for r in rows]

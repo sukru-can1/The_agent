@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Pause, Play, RefreshCw } from "lucide-react";
+import { Pause, Play, RefreshCw, BarChart3, Brain, ScrollText } from "lucide-react";
+import Link from "next/link";
 import StatusBar from "@/components/StatusBar";
 import ActionCard from "@/components/ActionCard";
 import EditModal from "@/components/EditModal";
@@ -349,6 +350,27 @@ export default function Home() {
           )}
         </div>
         <div className="flex items-center gap-2">
+          <Link
+            href="/analytics"
+            className="p-2 rounded-xl hover:bg-[var(--color-surface-hover)] transition-colors"
+            title="Analytics"
+          >
+            <BarChart3 size={16} className="text-[var(--color-text-muted)]" />
+          </Link>
+          <Link
+            href="/knowledge"
+            className="p-2 rounded-xl hover:bg-[var(--color-surface-hover)] transition-colors"
+            title="Knowledge Base"
+          >
+            <Brain size={16} className="text-[var(--color-text-muted)]" />
+          </Link>
+          <Link
+            href="/actions"
+            className="p-2 rounded-xl hover:bg-[var(--color-surface-hover)] transition-colors"
+            title="Action Log"
+          >
+            <ScrollText size={16} className="text-[var(--color-text-muted)]" />
+          </Link>
           <button
             onClick={handleRefresh}
             className="p-2 rounded-xl hover:bg-[var(--color-surface-hover)] transition-colors"

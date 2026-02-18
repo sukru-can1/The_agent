@@ -5,11 +5,14 @@ from __future__ import annotations
 import json
 import time
 
+import anthropic
+
 from agent1.common.db import get_pool
 from agent1.common.logging import get_logger
-from agent1.common.models import ActionLog, Event
+from agent1.common.models import ActionLog, ClassificationResult, Event, EventSource
 from agent1.common.observability import trace_operation
 from agent1.common.redis_client import get_redis
+from agent1.common.settings import get_settings
 
 log = get_logger(__name__)
 
@@ -72,6 +75,22 @@ async def process_event(event: Event) -> None:
         urgency=classification.urgency.value,
         complexity=classification.complexity.value,
     )
+
+    # Step 1b: Handle teachable rules immediately
+    if classification.is_teachable_rule and event.source == EventSource.GCHAT:
+        await _handle_teachable_rule(event, start)
+        return
+
+    # Step 1c: Auto-respond to simple Chat questions
+    if (
+        event.source == EventSource.GCHAT
+        and event.event_type == "chat_message"
+        and classification.complexity == "simple"
+        and classification.needs_response
+    ):
+        handled = await _handle_chat_auto_response(event, classification, start)
+        if handled:
+            return
 
     # Step 2: Plan (skip for simple events)
     plan = None
@@ -136,3 +155,150 @@ async def process_event(event: Event) -> None:
         event_id=str(event.id),
         latency_ms=elapsed_ms,
     )
+
+
+async def _handle_teachable_rule(event: Event, start: float) -> None:
+    """Handle a teachable rule from Google Chat — store as knowledge."""
+    text = event.payload.get("text", "")
+    sender = event.payload.get("sender", "")
+    space = event.payload.get("space", "")
+
+    # Store in knowledge table
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO knowledge (category, content, source, is_active, version)
+            VALUES ('taught_rule', $1, $2, true, 1)
+            """,
+            text,
+            f"taught_by:{sender}",
+        )
+
+    # Acknowledge via Chat
+    try:
+        from agent1.tools.google_chat import GChatReplyAsAgentTool
+
+        chat = GChatReplyAsAgentTool()
+        await chat.execute(
+            space=space,
+            thread_key=event.payload.get("thread", ""),
+            message=f"Got it. I've learned this rule and will follow it going forward:\n> {text}",
+        )
+    except Exception as exc:
+        log.warning("teach_ack_failed", error=str(exc))
+
+    elapsed_ms = int((time.monotonic() - start) * 1000)
+    await _log_action(
+        ActionLog(
+            system="gchat",
+            action_type="teachable_rule_stored",
+            details={"text": text, "sender": sender},
+            outcome="success",
+            latency_ms=elapsed_ms,
+        ),
+        event_id=str(event.id),
+    )
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE events SET status = 'completed', processed_at = NOW() WHERE id = $1",
+            event.id,
+        )
+
+    log.info("teachable_rule_stored", event_id=str(event.id), sender=sender)
+
+
+async def _handle_chat_auto_response(
+    event: Event, classification: ClassificationResult, start: float
+) -> bool:
+    """Auto-respond to simple Chat questions using Haiku.
+
+    Returns True if handled, False to fall through to full reasoning.
+    """
+    settings = get_settings()
+    if not settings.anthropic_api_key:
+        return False
+
+    text = event.payload.get("text", "")
+    space = event.payload.get("space", "")
+    thread = event.payload.get("thread", "")
+
+    # Search knowledge for context (plain text search — no pgvector needed)
+    context_str = ""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            # Simple keyword search in knowledge base
+            words = [w for w in text.lower().split() if len(w) > 3][:5]
+            if words:
+                like_clauses = " OR ".join(f"LOWER(content) LIKE '%' || ${i+1} || '%'" for i in range(len(words)))
+                rows = await conn.fetch(
+                    f"""
+                    SELECT content FROM knowledge
+                    WHERE is_active = true AND ({like_clauses})
+                    LIMIT 3
+                    """,
+                    *words,
+                )
+                if rows:
+                    context_str = "\n\nRelevant knowledge:\n" + "\n".join(
+                        f"- {r['content']}" for r in rows
+                    )
+    except Exception:
+        pass
+
+    # Quick Haiku response
+    try:
+        client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        response = await client.messages.create(
+            model=settings.claude_model_haiku,
+            max_tokens=500,
+            system=(
+                "You are Atlas, GLAMIRA's operations assistant. "
+                "Answer the question briefly and helpfully. "
+                "If you're not confident in the answer, say so."
+                + context_str
+            ),
+            messages=[{"role": "user", "content": text}],
+        )
+
+        answer = response.content[0].text.strip()
+        input_tokens = response.usage.input_tokens
+        output_tokens = response.usage.output_tokens
+
+        # Post reply via Chat
+        from agent1.tools.google_chat import GChatReplyAsAgentTool
+
+        chat = GChatReplyAsAgentTool()
+        await chat.execute(space=space, thread_key=thread, message=answer)
+
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        await _log_action(
+            ActionLog(
+                system="gchat",
+                action_type="auto_response",
+                details={"question": text[:200], "answer": answer[:200]},
+                outcome="success",
+                model_used=settings.claude_model_haiku,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                latency_ms=elapsed_ms,
+            ),
+            event_id=str(event.id),
+        )
+
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE events SET status = 'completed', processed_at = NOW() WHERE id = $1",
+                event.id,
+            )
+
+        log.info("chat_auto_response_sent", event_id=str(event.id))
+        return True
+
+    except Exception:
+        log.exception("auto_response_failed", event_id=str(event.id))
+        return False

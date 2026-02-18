@@ -85,6 +85,8 @@ class ClassificationResult(BaseModel):
     involves_financial: bool = False
     needs_response: bool = False
     confidence: float = 0.0
+    detected_language: str = "en"
+    is_teachable_rule: bool = False
 
 
 class EmailDraft(BaseModel):

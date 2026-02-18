@@ -83,6 +83,8 @@ async def classify_event(event: Event) -> ClassificationResult:
             involves_financial=data.get("involves_financial", False),
             needs_response=data.get("needs_response", True),
             confidence=data.get("confidence", 0.8),
+            detected_language=data.get("detected_language", "en"),
+            is_teachable_rule=data.get("is_teachable_rule", False),
         )
     except Exception:
         log.exception("classification_failed", event_id=str(event.id))

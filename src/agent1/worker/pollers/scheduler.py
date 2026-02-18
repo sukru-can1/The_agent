@@ -41,6 +41,46 @@ async def _run_starinfinity_poller() -> None:
     await poll_starinfinity()
 
 
+async def _run_pattern_detection() -> None:
+    """Run pattern detection checks."""
+    from agent1.worker.pattern_detector import detect_patterns
+
+    await detect_patterns()
+
+
+async def _run_feedback_analysis() -> None:
+    """Run feedback pattern analysis (edit learning)."""
+    from agent1.feedback.analyzer import analyze_edit_patterns
+
+    patterns = await analyze_edit_patterns(min_edits=3)
+    if patterns:
+        from agent1.common.db import get_pool
+
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            for p in patterns:
+                # Store as knowledge if not already stored
+                existing = await conn.fetchval(
+                    """
+                    SELECT id FROM knowledge
+                    WHERE category = 'edit_pattern'
+                      AND source = $1
+                      AND is_active = true
+                    """,
+                    f"feedback:{p['sender_domain']}",
+                )
+                if not existing:
+                    await conn.execute(
+                        """
+                        INSERT INTO knowledge (category, content, source, is_active, version)
+                        VALUES ('edit_pattern', $1, $2, true, 1)
+                        """,
+                        f"Drafts for {p['sender_domain']} ({p['category']}) are edited {p['avg_edit_ratio']*100:.0f}% on average. Adjust tone/style accordingly.",
+                        f"feedback:{p['sender_domain']}",
+                    )
+        log.info("feedback_patterns_stored", count=len(patterns))
+
+
 async def _morning_brief() -> None:
     """Publish morning briefing event at 06:00 UTC."""
     event = Event(
@@ -88,8 +128,16 @@ async def run_scheduler() -> None:
                 _run_freshdesk_poller(),
                 _run_feedbacks_poller(),
                 _run_starinfinity_poller(),
+                _run_pattern_detection(),
                 return_exceptions=True,
             )
+
+            # Run feedback analysis less frequently (every 10th tick)
+            if poll_count % 10 == 0:
+                try:
+                    await _run_feedback_analysis()
+                except Exception:
+                    log.exception("feedback_analysis_error")
 
             # Cron-like checks (approximate — within one polling interval)
             if now.hour == 6 and now.minute < (interval // 60 + 1):

@@ -271,10 +271,33 @@ class GmailDraftReplyTool(BaseTool):
                 classification=classification,
             )
 
+            # Post approval card to Google Chat
+            try:
+                from agent1.tools.chat_cards import build_draft_approval_card
+                from agent1.tools.google_chat import GChatPostMessageTool
+
+                card = build_draft_approval_card(
+                    draft_id=draft_id,
+                    subject=subject,
+                    from_address=from_address,
+                    to_address=to_address,
+                    draft_body=draft_body,
+                    classification=classification,
+                )
+                chat_tool = GChatPostMessageTool()
+                await chat_tool.execute(
+                    space="alerts",
+                    message=f"New email draft #{draft_id} needs approval",
+                    thread_key=f"draft-{draft_id}",
+                    cards=card,
+                )
+            except Exception as chat_exc:
+                log.warning("draft_chat_notification_failed", error=str(chat_exc))
+
             return {
                 "draft_id": draft_id,
                 "status": "pending_approval",
-                "message": "Draft stored for approval",
+                "message": "Draft stored for approval and posted to Chat",
             }
 
         except Exception as exc:
