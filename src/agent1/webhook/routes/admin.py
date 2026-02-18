@@ -484,39 +484,3 @@ async def list_actions(limit: int = 50):
         )
     return [dict(r) for r in rows]
 
-
-@router.get("/diag/pgvector")
-async def diag_pgvector():
-    """Check pgvector extension and vector columns."""
-    results: dict = {}
-    try:
-        pool = await get_pool()
-        async with pool.acquire() as conn:
-            ext = await conn.fetchval(
-                "SELECT extversion FROM pg_extension WHERE extname = 'vector'"
-            )
-            results["extension"] = ext or "NOT INSTALLED"
-
-            cols = await conn.fetch(
-                """
-                SELECT table_name, column_name, udt_name
-                FROM information_schema.columns
-                WHERE udt_name = 'vector'
-                ORDER BY table_name
-                """
-            )
-            results["vector_columns"] = [dict(r) for r in cols]
-
-            tables = await conn.fetch(
-                "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename"
-            )
-            results["tables"] = [r["tablename"] for r in tables]
-
-            try:
-                await conn.execute("SELECT '[1,2,3]'::vector(3)")
-                results["vector_cast_test"] = "OK"
-            except Exception as e:
-                results["vector_cast_test"] = f"FAILED: {e}"
-    except Exception as exc:
-        results["error"] = str(exc)
-    return results
