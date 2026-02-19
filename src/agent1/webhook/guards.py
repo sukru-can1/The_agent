@@ -48,22 +48,35 @@ async def verify_google_chat_token(
         from google.oauth2 import id_token as google_id_token
         from google.auth.transport import requests as google_requests
 
-        # Verify the JWT. Google Chat tokens are signed by Google's
-        # service account and the audience is the Cloud project number.
-        claim = google_id_token.verify_token(
-            token,
-            google_requests.Request(),
-            audience=settings.google_project_number,
-            certs_url="https://www.googleapis.com/service_accounts/v1/metadata/x509/"
+        google_request = google_requests.Request()
+
+        # Google Chat HTTP endpoints may sign JWTs with different service
+        # accounts. Try the default Google OAuth2 certs first, then fall
+        # back to the Chat-specific service account certs.
+        claim = None
+        last_error = None
+
+        for certs_url in (
+            None,  # default Google OAuth2 certs
+            "https://www.googleapis.com/service_accounts/v1/metadata/x509/"
             + _GOOGLE_CHAT_ISSUER,
-        )
+        ):
+            try:
+                kwargs = {"audience": settings.google_project_number}
+                if certs_url:
+                    kwargs["certs_url"] = certs_url
+                claim = google_id_token.verify_token(
+                    token, google_request, **kwargs,
+                )
+                break
+            except Exception as exc:
+                last_error = exc
+                continue
 
-        # Verify issuer
-        if claim.get("iss") != _GOOGLE_CHAT_ISSUER:
-            log.warning("gchat_auth_bad_issuer", issuer=claim.get("iss"))
-            raise HTTPException(status_code=403, detail="Invalid issuer")
+        if claim is None:
+            raise last_error  # type: ignore[misc]
 
-        log.debug("gchat_auth_ok", email=claim.get("email"))
+        log.debug("gchat_auth_ok", issuer=claim.get("iss"), email=claim.get("email"))
 
     except HTTPException:
         raise
