@@ -65,6 +65,7 @@ def register_all_tools() -> None:
         FreshdeskUpdateTicketTool,
     )
     from agent1.tools.starinfinity import (
+        StarInfinityListBoardsTool,
         StarInfinityGetTasksTool,
         StarInfinityCreateTaskTool,
         StarInfinityUpdateTaskTool,
@@ -105,6 +106,7 @@ def register_all_tools() -> None:
         FreshdeskAddNoteTool(),
         FreshdeskUpdateTicketTool(),
         # StarInfinity
+        StarInfinityListBoardsTool(),
         StarInfinityGetTasksTool(),
         StarInfinityCreateTaskTool(),
         StarInfinityUpdateTaskTool(),

@@ -30,17 +30,12 @@ async def _get_client() -> httpx.AsyncClient | None:
     )
 
 
-class StarInfinityGetTasksTool(BaseTool):
-    name = "starinfinity_get_tasks"
-    description = "Get tasks from StarInfinity project management."
+class StarInfinityListBoardsTool(BaseTool):
+    name = "starinfinity_list_boards"
+    description = "List all boards in the StarInfinity workspace."
     input_schema = {
         "type": "object",
-        "properties": {
-            "project_id": {"type": "string"},
-            "status": {"type": "string"},
-            "assignee": {"type": "string"},
-            "due_before": {"type": "string", "description": "ISO date — find overdue tasks"},
-        },
+        "properties": {},
     }
 
     async def execute(self, **kwargs: Any) -> Any:
@@ -48,30 +43,61 @@ class StarInfinityGetTasksTool(BaseTool):
         if client is None:
             return _NOT_CONFIGURED
 
-        # Build query params from provided kwargs, skipping None values
-        params: dict[str, str] = {}
-        for key in ("project_id", "status", "assignee", "due_before"):
-            value = kwargs.get(key)
-            if value is not None:
-                params[key] = value
-
         try:
             async with client:
-                resp = await client.get("/api/tasks", params=params)
+                resp = await client.get("/boards")
                 resp.raise_for_status()
                 data = resp.json()
 
-            tasks = data if isinstance(data, list) else data.get("tasks", data.get("data", []))
-
-            log.info("starinfinity_get_tasks", params=params, count=len(tasks))
-            return {"tasks": tasks}
+            boards = data if isinstance(data, list) else data.get("data", [])
+            log.info("starinfinity_list_boards", count=len(boards))
+            return {"boards": [{"id": b.get("id"), "name": b.get("name")} for b in boards]}
 
         except httpx.HTTPStatusError as exc:
-            log.warning(
-                "starinfinity_get_tasks_api_error",
-                status_code=exc.response.status_code,
-                detail=exc.response.text[:500],
-            )
+            log.warning("starinfinity_list_boards_error", status_code=exc.response.status_code, detail=exc.response.text[:500])
+            return {"error": f"StarInfinity API error: {exc.response.status_code}"}
+        except httpx.HTTPError as exc:
+            log.warning("starinfinity_list_boards_network_error", error=str(exc))
+            return {"error": f"StarInfinity network error: {exc}"}
+
+
+class StarInfinityGetTasksTool(BaseTool):
+    name = "starinfinity_get_tasks"
+    description = "Get items (tasks) from a StarInfinity board. Must provide board_id."
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "board_id": {"type": "string", "description": "Board ID to list items from"},
+            "limit": {"type": "integer", "description": "Max items to return (default 50)"},
+            "after": {"type": "integer", "description": "Cursor for pagination"},
+        },
+        "required": ["board_id"],
+    }
+
+    async def execute(self, **kwargs: Any) -> Any:
+        client = await _get_client()
+        if client is None:
+            return _NOT_CONFIGURED
+
+        board_id = kwargs["board_id"]
+        params: dict[str, Any] = {}
+        if kwargs.get("limit"):
+            params["limit"] = kwargs["limit"]
+        if kwargs.get("after"):
+            params["after"] = kwargs["after"]
+
+        try:
+            async with client:
+                resp = await client.get(f"/boards/{board_id}/items", params=params)
+                resp.raise_for_status()
+                data = resp.json()
+
+            items = data if isinstance(data, list) else data.get("data", [])
+            log.info("starinfinity_get_tasks", board_id=board_id, count=len(items))
+            return {"items": items}
+
+        except httpx.HTTPStatusError as exc:
+            log.warning("starinfinity_get_tasks_api_error", status_code=exc.response.status_code, detail=exc.response.text[:500])
             return {"error": f"StarInfinity API error: {exc.response.status_code}"}
         except httpx.HTTPError as exc:
             log.warning("starinfinity_get_tasks_network_error", error=str(exc))
@@ -80,18 +106,15 @@ class StarInfinityGetTasksTool(BaseTool):
 
 class StarInfinityCreateTaskTool(BaseTool):
     name = "starinfinity_create_task"
-    description = "Create a new task in StarInfinity."
+    description = "Create a new item (task) in a StarInfinity board."
     input_schema = {
         "type": "object",
         "properties": {
-            "project_id": {"type": "string"},
-            "title": {"type": "string"},
-            "description": {"type": "string"},
-            "assignee": {"type": "string"},
-            "due_date": {"type": "string"},
-            "priority": {"type": "string", "enum": ["low", "medium", "high", "critical"]},
+            "board_id": {"type": "string", "description": "Board to create the item in"},
+            "folder_id": {"type": "string", "description": "Folder within the board"},
+            "values": {"type": "object", "description": "Attribute values for the item (keys are attribute IDs)"},
         },
-        "required": ["project_id", "title"],
+        "required": ["board_id"],
     }
 
     async def execute(self, **kwargs: Any) -> Any:
@@ -99,35 +122,25 @@ class StarInfinityCreateTaskTool(BaseTool):
         if client is None:
             return _NOT_CONFIGURED
 
-        # Build request body from provided kwargs, skipping None values
+        board_id = kwargs["board_id"]
         body: dict[str, Any] = {}
-        for key in ("project_id", "title", "description", "assignee", "due_date", "priority"):
-            value = kwargs.get(key)
-            if value is not None:
-                body[key] = value
+        if kwargs.get("folder_id"):
+            body["folder_id"] = kwargs["folder_id"]
+        if kwargs.get("values"):
+            body["values"] = kwargs["values"]
 
         try:
             async with client:
-                resp = await client.post("/api/tasks", json=body)
+                resp = await client.post(f"/boards/{board_id}/items", json=body)
                 resp.raise_for_status()
                 data = resp.json()
 
-            task_id = data.get("id") or data.get("task_id", "")
-
-            log.info(
-                "starinfinity_create_task",
-                task_id=task_id,
-                project_id=kwargs.get("project_id"),
-                title=kwargs.get("title", "")[:80],
-            )
-            return {"task_id": task_id, "status": "created"}
+            item_id = data.get("id", "")
+            log.info("starinfinity_create_task", item_id=item_id, board_id=board_id)
+            return {"item_id": item_id, "status": "created", "data": data}
 
         except httpx.HTTPStatusError as exc:
-            log.warning(
-                "starinfinity_create_task_api_error",
-                status_code=exc.response.status_code,
-                detail=exc.response.text[:500],
-            )
+            log.warning("starinfinity_create_task_api_error", status_code=exc.response.status_code, detail=exc.response.text[:500])
             return {"error": f"StarInfinity API error: {exc.response.status_code}"}
         except httpx.HTTPError as exc:
             log.warning("starinfinity_create_task_network_error", error=str(exc))
@@ -136,16 +149,16 @@ class StarInfinityCreateTaskTool(BaseTool):
 
 class StarInfinityUpdateTaskTool(BaseTool):
     name = "starinfinity_update_task"
-    description = "Update an existing task in StarInfinity."
+    description = "Update an existing item (task) in StarInfinity."
     input_schema = {
         "type": "object",
         "properties": {
-            "task_id": {"type": "string"},
-            "status": {"type": "string"},
-            "notes": {"type": "string"},
-            "assignee": {"type": "string"},
+            "board_id": {"type": "string", "description": "Board the item belongs to"},
+            "item_id": {"type": "string", "description": "Item ID to update"},
+            "values": {"type": "object", "description": "Attribute values to update"},
+            "folder_id": {"type": "string", "description": "Move to a different folder"},
         },
-        "required": ["task_id"],
+        "required": ["board_id", "item_id"],
     }
 
     async def execute(self, **kwargs: Any) -> Any:
@@ -153,31 +166,25 @@ class StarInfinityUpdateTaskTool(BaseTool):
         if client is None:
             return _NOT_CONFIGURED
 
-        task_id = kwargs["task_id"]
-
-        # Build request body from provided kwargs (excluding task_id)
+        board_id = kwargs["board_id"]
+        item_id = kwargs["item_id"]
         body: dict[str, Any] = {}
-        for key in ("status", "notes", "assignee"):
-            value = kwargs.get(key)
-            if value is not None:
-                body[key] = value
+        if kwargs.get("values"):
+            body["values"] = kwargs["values"]
+        if kwargs.get("folder_id"):
+            body["folder_id"] = kwargs["folder_id"]
 
         try:
             async with client:
-                resp = await client.put(f"/api/tasks/{task_id}", json=body)
+                resp = await client.put(f"/boards/{board_id}/items/{item_id}", json=body)
                 resp.raise_for_status()
 
-            log.info("starinfinity_update_task", task_id=task_id, fields=list(body.keys()))
+            log.info("starinfinity_update_task", item_id=item_id, board_id=board_id)
             return {"status": "updated"}
 
         except httpx.HTTPStatusError as exc:
-            log.warning(
-                "starinfinity_update_task_api_error",
-                task_id=task_id,
-                status_code=exc.response.status_code,
-                detail=exc.response.text[:500],
-            )
+            log.warning("starinfinity_update_task_api_error", item_id=item_id, status_code=exc.response.status_code, detail=exc.response.text[:500])
             return {"error": f"StarInfinity API error: {exc.response.status_code}"}
         except httpx.HTTPError as exc:
-            log.warning("starinfinity_update_task_network_error", task_id=task_id, error=str(exc))
+            log.warning("starinfinity_update_task_network_error", item_id=item_id, error=str(exc))
             return {"error": f"StarInfinity network error: {exc}"}
