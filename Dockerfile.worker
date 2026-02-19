@@ -13,6 +13,7 @@ RUN uv sync --frozen --no-dev 2>/dev/null || uv sync --no-dev
 
 # Copy application code
 COPY migrations/ migrations/
+COPY mcp_servers.json ./
 COPY src/ src/
 
 ENV PYTHONPATH=/app/src
