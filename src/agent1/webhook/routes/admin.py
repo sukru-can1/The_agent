@@ -448,6 +448,41 @@ async def analytics_summary():
     }
 
 
+class InjectEventBody(BaseModel):
+    source: str = "gchat"
+    event_type: str = "chat_message"
+    text: str
+    space: str = ""
+    thread: str = ""
+
+
+@router.post("/inject-event")
+async def inject_event(body: InjectEventBody):
+    """Inject a test event into the queue (for debugging/testing)."""
+    from agent1.common.models import Event, EventSource, Priority
+    from agent1.queue.publisher import publish_event
+    from agent1.common.settings import get_settings
+
+    settings = get_settings()
+    space = body.space or settings.gchat_dm_sukru or ""
+
+    event = Event(
+        source=EventSource(body.source),
+        event_type=body.event_type,
+        priority=Priority.MEDIUM,
+        payload={
+            "text": body.text,
+            "space": space,
+            "thread": body.thread,
+            "sender": "Admin (test)",
+            "sender_email": settings.gchat_user_email,
+        },
+    )
+    await publish_event(event)
+    log.info("test_event_injected", event_id=str(event.id), text=body.text[:80])
+    return {"status": "published", "event_id": str(event.id), "space": space}
+
+
 @router.get("/knowledge")
 async def list_knowledge(limit: int = 50):
     """List knowledge base entries."""
