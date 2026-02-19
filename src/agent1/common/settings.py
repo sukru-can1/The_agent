@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     gchat_space_log: str = ""
     gchat_space_summary: str = ""
     gchat_dm_sukru: str = ""
+    gchat_poll_spaces: list[str] = Field(default_factory=list)  # space IDs to poll in user mode
+    gchat_user_email: str = "sukru@glamira.com"  # to filter out own messages
 
     # --- Freshdesk ---
     freshdesk_domain: str = "glamira.freshdesk.com"

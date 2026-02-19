@@ -80,6 +80,10 @@ def register_all_tools() -> None:
         MemoryStoreIncidentTool,
         MemoryStoreKnowledgeTool,
     )
+    from agent1.tools.google_chat_user import (
+        GChatReplyAsUserTool,
+        GChatListMySpacesTool,
+    )
 
     all_tools = [
         # Gmail
@@ -113,6 +117,9 @@ def register_all_tools() -> None:
         MemorySearchTool(),
         MemoryStoreIncidentTool(),
         MemoryStoreKnowledgeTool(),
+        # Google Chat (user mode)
+        GChatReplyAsUserTool(),
+        GChatListMySpacesTool(),
     ]
 
     for tool in all_tools:

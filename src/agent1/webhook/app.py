@@ -73,12 +73,14 @@ def create_app() -> FastAPI:
     from agent1.webhook.routes.freshdesk import router as freshdesk_router
     from agent1.webhook.routes.gmail_push import router as gmail_router
     from agent1.webhook.routes.admin import router as admin_router
+    from agent1.webhook.routes.oauth_callback import router as oauth_router
 
     app.include_router(health_router)
     app.include_router(gchat_router, prefix="/webhooks")
     app.include_router(freshdesk_router, prefix="/webhooks")
     app.include_router(gmail_router, prefix="/webhooks")
     app.include_router(admin_router, prefix="/admin")
+    app.include_router(oauth_router, prefix="/admin")
 
     # Add middleware
     from agent1.webhook.middleware import add_middleware

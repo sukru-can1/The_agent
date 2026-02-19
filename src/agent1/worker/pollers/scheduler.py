@@ -41,6 +41,13 @@ async def _run_starinfinity_poller() -> None:
     await poll_starinfinity()
 
 
+async def _run_gchat_poller() -> None:
+    """Poll Google Chat spaces for messages to Sukru (user mode)."""
+    from agent1.worker.pollers.gchat_poller import poll_gchat
+
+    await poll_gchat()
+
+
 async def _run_pattern_detection() -> None:
     """Run pattern detection checks."""
     from agent1.worker.pattern_detector import detect_patterns
@@ -128,6 +135,7 @@ async def run_scheduler() -> None:
                 _run_freshdesk_poller(),
                 _run_feedbacks_poller(),
                 _run_starinfinity_poller(),
+                _run_gchat_poller(),
                 _run_pattern_detection(),
                 return_exceptions=True,
             )

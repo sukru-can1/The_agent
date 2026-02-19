@@ -18,6 +18,7 @@ log = get_logger(__name__)
 _gmail_service = None
 _drive_service = None
 _chat_service = None
+_chat_user_service = None
 
 
 def _get_oauth_credentials() -> Credentials | None:
@@ -86,3 +87,14 @@ def get_chat_service() -> Any:
             return None
         _chat_service = build("chat", "v1", credentials=creds)
     return _chat_service
+
+
+def get_chat_user_service() -> Any:
+    """Get Chat API service as the user (OAuth) — messages appear from Sukru."""
+    global _chat_user_service
+    if _chat_user_service is None:
+        creds = _get_oauth_credentials()
+        if creds is None:
+            return None
+        _chat_user_service = build("chat", "v1", credentials=creds)
+    return _chat_user_service
