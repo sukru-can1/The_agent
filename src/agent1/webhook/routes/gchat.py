@@ -118,7 +118,7 @@ async def _handle_message(body: dict, is_addon: bool) -> dict:
     event = Event(
         source=EventSource.GCHAT,
         event_type="teachable_rule" if is_teach else "chat_message",
-        priority=Priority.HIGH if is_teach else Priority.MEDIUM,
+        priority=Priority.HIGH,
         payload={
             "space": body.get("space", {}).get("name", ""),
             "thread": message.get("thread", {}).get("name", ""),

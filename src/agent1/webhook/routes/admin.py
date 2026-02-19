@@ -469,7 +469,7 @@ async def inject_event(body: InjectEventBody):
     event = Event(
         source=EventSource(body.source),
         event_type=body.event_type,
-        priority=Priority.MEDIUM,
+        priority=Priority.HIGH,
         payload={
             "text": body.text,
             "space": space,
