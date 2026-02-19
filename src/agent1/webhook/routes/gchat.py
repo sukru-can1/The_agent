@@ -23,13 +23,21 @@ def _normalize_body(body: dict) -> dict:
 
     Google Chat sends two formats:
     - Legacy: {type, message, user, space, ...} at top level
-    - Workspace Add-on: {commonEventObject, authorizationEventObject, chat: {type, message, user, ...}}
+    - Workspace Add-on: {commonEventObject, chat: {user, eventTime, messagePayload: {message, space}}}
 
-    This function returns the chat event data regardless of format.
+    This function returns a flat dict with {type, message, user, space} regardless of format.
     """
     if "chat" in body and isinstance(body["chat"], dict):
-        # Workspace Add-on format — actual event data is inside 'chat'
-        return body["chat"]
+        chat = body["chat"]
+        # Workspace Add-on format — unwrap messagePayload
+        payload = chat.get("messagePayload", {})
+        return {
+            "type": chat.get("type", "MESSAGE"),
+            "eventTime": chat.get("eventTime"),
+            "message": payload.get("message", {}),
+            "space": payload.get("space", chat.get("space", {})),
+            "user": chat.get("user", {}),
+        }
     # Legacy format — data is at top level
     return body
 
