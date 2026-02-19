@@ -51,12 +51,15 @@ async def verify_google_chat_token(
         google_request = google_requests.Request()
 
         # Google Chat HTTP endpoints may sign JWTs with different service
-        # accounts. Try the default Google OAuth2 certs first, then fall
-        # back to the Chat-specific service account certs.
+        # accounts. Try the GSuite Addons SA, default OAuth2 certs, and
+        # the classic Chat issuer certs.
+        gsuiteaddons_sa = f"service-{settings.google_project_number}@gcp-sa-gsuiteaddons.iam.gserviceaccount.com"
         claim = None
         last_error = None
 
         for certs_url in (
+            "https://www.googleapis.com/service_accounts/v1/metadata/x509/"
+            + gsuiteaddons_sa,
             None,  # default Google OAuth2 certs
             "https://www.googleapis.com/service_accounts/v1/metadata/x509/"
             + _GOOGLE_CHAT_ISSUER,
