@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     gchat_user_email: str = "sukru.can@glamira-group.com"  # to filter out own messages
 
     # --- Freshdesk ---
-    freshdesk_domain: str = "glamira.freshdesk.com"
+    freshdesk_domain: str = "glmr.freshdesk.com"
     freshdesk_api_key: str = ""
 
     # --- StarInfinity ---
