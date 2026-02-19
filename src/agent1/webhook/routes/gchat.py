@@ -42,9 +42,20 @@ async def gchat_webhook(request: Request):
 async def _handle_message(body: dict) -> dict:
     """Handle a Chat message — enqueue for processing."""
     message = body.get("message", {})
-    text = message.get("text", "").strip()
+    # Google Chat uses 'argumentText' (without @mention) for bot messages,
+    # 'text' includes the @mention. Fall back through both fields.
+    text = (
+        message.get("argumentText", "").strip()
+        or message.get("text", "").strip()
+        or message.get("formattedText", "").strip()
+    )
     sender = body.get("user", {}).get("displayName", "")
     sender_email = body.get("user", {}).get("email", "")
+
+    log.info("gchat_message_text", text=text[:200] if text else "(empty)",
+             has_argument_text=bool(message.get("argumentText")),
+             has_text=bool(message.get("text")),
+             sender=sender)
 
     # Check if this is a teachable rule
     teach_indicators = ["from now on", "remember that", "always ", "never ", "stop doing"]

@@ -226,9 +226,13 @@ async def _handle_chat_auto_response(
     if not settings.anthropic_api_key:
         return False
 
-    text = event.payload.get("text", "")
+    text = event.payload.get("text", "").strip()
     space = event.payload.get("space", "")
     thread = event.payload.get("thread", "")
+
+    if not text:
+        log.warning("auto_response_empty_text", event_id=str(event.id))
+        return False
 
     # Search knowledge for context (plain text search — no pgvector needed)
     context_str = ""
