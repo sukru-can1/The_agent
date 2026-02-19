@@ -35,10 +35,12 @@ async def main() -> None:
     await get_pool()
     await get_redis()
 
-    # Register all tools
-    from agent1.tools.registry import register_all_tools
+    # Register all tools (native + MCP + dynamic)
+    from agent1.tools.registry import register_all_tools, register_mcp_tools, register_dynamic_tools
 
     register_all_tools()
+    await register_mcp_tools()
+    await register_dynamic_tools()
 
     # Register signal handlers (Unix only; Windows uses KeyboardInterrupt)
     import sys
@@ -62,6 +64,11 @@ async def main() -> None:
     scheduler_task.cancel()
 
     await asyncio.gather(consumer_task, scheduler_task, return_exceptions=True)
+
+    # Shut down MCP servers
+    from agent1.tools.mcp import stop_mcp_servers
+
+    await stop_mcp_servers()
 
     flush_langfuse()
     await close_pools()

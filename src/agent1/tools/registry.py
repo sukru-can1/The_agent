@@ -119,3 +119,24 @@ def register_all_tools() -> None:
         register_tool(tool)
 
     log.info("all_tools_registered", count=len(all_tools))
+
+
+async def register_mcp_tools() -> None:
+    """Discover and register tools from configured MCP servers."""
+    from agent1.tools.mcp import start_mcp_servers
+
+    await start_mcp_servers()
+
+
+async def register_dynamic_tools() -> None:
+    """Load persisted dynamic tools from database."""
+    from agent1.common.settings import get_settings
+
+    settings = get_settings()
+    if not settings.dynamic_tools_enabled:
+        log.info("dynamic_tools_disabled")
+        return
+
+    from agent1.tools.mcp.builder import load_dynamic_tools
+
+    await load_dynamic_tools()

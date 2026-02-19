@@ -37,16 +37,21 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         log.warning("redis_connect_failed", error=str(exc))
 
-    # Register all tools
-    from agent1.tools.registry import register_all_tools
+    # Register all tools (native + MCP + dynamic)
+    from agent1.tools.registry import register_all_tools, register_mcp_tools, register_dynamic_tools
 
     register_all_tools()
+    await register_mcp_tools()
+    await register_dynamic_tools()
 
     log.info("webhook_started", agent=settings.agent_name)
 
     yield
 
     # Cleanup
+    from agent1.tools.mcp import stop_mcp_servers
+
+    await stop_mcp_servers()
     await close_pools()
     await close_redis()
     log.info("webhook_stopped")

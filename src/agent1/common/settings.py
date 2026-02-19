@@ -61,6 +61,10 @@ class Settings(BaseSettings):
     langfuse_secret_key: str = ""
     langfuse_host: str = "https://cloud.langfuse.com"
 
+    # --- MCP ---
+    mcp_config_path: str = "mcp_servers.json"
+    dynamic_tools_enabled: bool = True
+
     # --- Agent ---
     agent_name: str = "The Agent1"
     heartbeat_interval_seconds: int = 300

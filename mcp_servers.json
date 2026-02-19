@@ -1,0 +1,38 @@
+{
+  "servers": [
+    {
+      "name": "google_analytics",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@anthropic/google-analytics-mcp"],
+      "env": {
+        "GA_PROPERTY_ID": "${GA_PROPERTY_ID}"
+      },
+      "enabled": false
+    },
+    {
+      "name": "railway",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "railway-mcp-server"],
+      "env": {
+        "RAILWAY_TOKEN": "${RAILWAY_TOKEN}"
+      },
+      "enabled": false
+    },
+    {
+      "name": "filesystem",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp/agent-workspace"],
+      "enabled": false
+    },
+    {
+      "name": "fetch",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-fetch"],
+      "enabled": false
+    }
+  ]
+}

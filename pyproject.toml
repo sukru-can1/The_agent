@@ -22,6 +22,7 @@ dependencies = [
     "python-dateutil>=2.9",
     "python-Levenshtein>=0.26",
     "pypdf>=4.0",
+    "mcp>=1.7",
 ]
 
 [dependency-groups]
