@@ -55,8 +55,8 @@ async def oauth_start(request: Request):
             status_code=400,
         )
 
-    # Build redirect URI from the current request
-    redirect_uri = str(request.url_for("oauth_callback"))
+    # Build redirect URI — force HTTPS (Railway proxy terminates SSL)
+    redirect_uri = str(request.url_for("oauth_callback")).replace("http://", "https://")
 
     flow = _build_flow(redirect_uri)
     authorization_url, state = flow.authorization_url(
@@ -84,7 +84,7 @@ async def oauth_callback(request: Request, code: str = "", error: str = ""):
             status_code=400,
         )
 
-    redirect_uri = str(request.url_for("oauth_callback"))
+    redirect_uri = str(request.url_for("oauth_callback")).replace("http://", "https://")
     flow = _build_flow(redirect_uri)
 
     try:
