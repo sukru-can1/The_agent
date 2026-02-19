@@ -24,7 +24,10 @@ async def gchat_webhook(request: Request):
     body = await request.json()
     event_type = body.get("type", "MESSAGE")
 
-    log.info("gchat_webhook_received", event_type=event_type)
+    # Log full payload keys for debugging (truncate values)
+    log.info("gchat_webhook_received", event_type=event_type,
+             body_keys=list(body.keys()),
+             body_preview=json.dumps(body, default=str)[:1000])
 
     if event_type == "ADDED_TO_SPACE":
         settings = get_settings()
