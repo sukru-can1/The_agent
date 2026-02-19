@@ -18,16 +18,34 @@ log = get_logger(__name__)
 router = APIRouter(tags=["webhooks"])
 
 
+def _normalize_body(body: dict) -> dict:
+    """Normalize Google Chat event payload.
+
+    Google Chat sends two formats:
+    - Legacy: {type, message, user, space, ...} at top level
+    - Workspace Add-on: {commonEventObject, authorizationEventObject, chat: {type, message, user, ...}}
+
+    This function returns the chat event data regardless of format.
+    """
+    if "chat" in body and isinstance(body["chat"], dict):
+        # Workspace Add-on format — actual event data is inside 'chat'
+        return body["chat"]
+    # Legacy format — data is at top level
+    return body
+
+
 @router.post("/gchat", dependencies=[Depends(verify_google_chat_token)])
 async def gchat_webhook(request: Request):
     """Handle incoming Google Chat events (messages, button clicks, etc.)."""
-    body = await request.json()
+    raw_body = await request.json()
+
+    # Normalize to handle both legacy and Workspace Add-on event formats
+    body = _normalize_body(raw_body)
     event_type = body.get("type", "MESSAGE")
 
-    # Log full payload keys for debugging (truncate values)
     log.info("gchat_webhook_received", event_type=event_type,
-             body_keys=list(body.keys()),
-             body_preview=json.dumps(body, default=str)[:1000])
+             format="addon" if "chat" in raw_body else "legacy",
+             body_keys=list(body.keys()))
 
     if event_type == "ADDED_TO_SPACE":
         settings = get_settings()
@@ -56,13 +74,11 @@ async def _handle_message(body: dict) -> dict:
     sender_email = body.get("user", {}).get("email", "")
 
     log.info("gchat_message_text", text=text[:200] if text else "(empty)",
-             has_argument_text=bool(message.get("argumentText")),
-             has_text=bool(message.get("text")),
-             sender=sender)
+             sender=sender, sender_email=sender_email)
 
     # Check if this is a teachable rule
     teach_indicators = ["from now on", "remember that", "always ", "never ", "stop doing"]
-    is_teach = any(indicator in text.lower() for indicator in teach_indicators)
+    is_teach = any(indicator in text.lower() for indicator in teach_indicators) if text else False
 
     event = Event(
         source=EventSource.GCHAT,
