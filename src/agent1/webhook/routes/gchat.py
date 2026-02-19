@@ -17,29 +17,52 @@ log = get_logger(__name__)
 
 router = APIRouter(tags=["webhooks"])
 
+# Module-level flag set per request to track event format
+_is_addon_format = False
 
-def _normalize_body(body: dict) -> dict:
+
+def _normalize_body(body: dict) -> tuple[dict, bool]:
     """Normalize Google Chat event payload.
 
     Google Chat sends two formats:
     - Legacy: {type, message, user, space, ...} at top level
     - Workspace Add-on: {commonEventObject, chat: {user, eventTime, messagePayload: {message, space}}}
 
-    This function returns a flat dict with {type, message, user, space} regardless of format.
+    Returns (normalized_body, is_addon_format).
     """
     if "chat" in body and isinstance(body["chat"], dict):
         chat = body["chat"]
         # Workspace Add-on format — unwrap messagePayload
         payload = chat.get("messagePayload", {})
-        return {
+        normalized = {
             "type": chat.get("type", "MESSAGE"),
             "eventTime": chat.get("eventTime"),
             "message": payload.get("message", {}),
             "space": payload.get("space", chat.get("space", {})),
             "user": chat.get("user", {}),
         }
+        return normalized, True
     # Legacy format — data is at top level
-    return body
+    return body, False
+
+
+def _chat_response(text: str, is_addon: bool) -> dict:
+    """Wrap a text response in the correct format for Google Chat.
+
+    Add-on format requires hostAppDataAction wrapper.
+    Legacy format just uses {"text": "..."}.
+    """
+    if is_addon:
+        return {
+            "hostAppDataAction": {
+                "chatDataAction": {
+                    "createMessageAction": {
+                        "message": {"text": text}
+                    }
+                }
+            }
+        }
+    return {"text": text}
 
 
 @router.post("/gchat", dependencies=[Depends(verify_google_chat_token)])
@@ -48,27 +71,31 @@ async def gchat_webhook(request: Request):
     raw_body = await request.json()
 
     # Normalize to handle both legacy and Workspace Add-on event formats
-    body = _normalize_body(raw_body)
+    body, is_addon = _normalize_body(raw_body)
     event_type = body.get("type", "MESSAGE")
 
     log.info("gchat_webhook_received", event_type=event_type,
-             format="addon" if "chat" in raw_body else "legacy",
+             format="addon" if is_addon else "legacy",
              body_keys=list(body.keys()))
 
     if event_type == "ADDED_TO_SPACE":
         settings = get_settings()
-        return {"text": f"Hello! I'm {settings.agent_name}, your GLAMIRA Ops Agent. I monitor emails, tickets, feedback, and tasks 24/7."}
+        return _chat_response(
+            f"Hello! I'm {settings.agent_name}, your GLAMIRA Ops Agent. "
+            "I monitor emails, tickets, feedback, and tasks 24/7.",
+            is_addon,
+        )
 
     if event_type == "MESSAGE":
-        return await _handle_message(body)
+        return await _handle_message(body, is_addon)
 
     if event_type == "CARD_CLICKED":
-        return await _handle_card_action(body)
+        return await _handle_card_action(body, is_addon)
 
-    return {"text": "OK"}
+    return _chat_response("OK", is_addon)
 
 
-async def _handle_message(body: dict) -> dict:
+async def _handle_message(body: dict, is_addon: bool) -> dict:
     """Handle a Chat message — enqueue for processing."""
     message = body.get("message", {})
     # Google Chat uses 'argumentText' (without @mention) for bot messages,
@@ -102,10 +129,10 @@ async def _handle_message(body: dict) -> dict:
         idempotency_key=f"gchat:{message.get('name', '')}",
     )
     await publish_event(event)
-    return {"text": "Processing..."}
+    return _chat_response("Processing...", is_addon)
 
 
-async def _handle_card_action(body: dict) -> dict:
+async def _handle_card_action(body: dict, is_addon: bool) -> dict:
     """Handle a Chat Card button click — approve/reject drafts, ack alerts."""
     action = body.get("action", {}) or body.get("common", {}).get("invokedFunction", "")
     function_name = action.get("function", "") if isinstance(action, dict) else action
@@ -120,16 +147,16 @@ async def _handle_card_action(body: dict) -> dict:
     log.info("card_action", function=function_name, params=parameters, user=user)
 
     if function_name == "approve_draft":
-        return await _approve_draft(parameters, user)
+        return await _approve_draft(parameters, user, is_addon)
 
     if function_name == "reject_draft":
-        return await _reject_draft(parameters, user)
+        return await _reject_draft(parameters, user, is_addon)
 
     if function_name == "edit_draft":
-        return await _edit_draft_redirect(parameters)
+        return _edit_draft_redirect(parameters, is_addon)
 
     if function_name == "ack_alert":
-        return {"text": f"Alert acknowledged by {user}."}
+        return _chat_response(f"Alert acknowledged by {user}.", is_addon)
 
     # Unknown action — publish as event for worker to handle
     event = Event(
@@ -144,14 +171,14 @@ async def _handle_card_action(body: dict) -> dict:
         },
     )
     await publish_event(event)
-    return {"text": "Action received."}
+    return _chat_response("Action received.", is_addon)
 
 
-async def _approve_draft(params: dict, user: str) -> dict:
+async def _approve_draft(params: dict, user: str, is_addon: bool) -> dict:
     """Approve a draft directly from Chat card button."""
     draft_id = params.get("draft_id")
     if not draft_id:
-        return {"text": "Error: No draft_id provided."}
+        return _chat_response("Error: No draft_id provided.", is_addon)
 
     try:
         draft_id_int = int(draft_id)
@@ -162,9 +189,9 @@ async def _approve_draft(params: dict, user: str) -> dict:
                 draft_id_int,
             )
             if not draft:
-                return {"text": f"Draft #{draft_id} not found."}
+                return _chat_response(f"Draft #{draft_id} not found.", is_addon)
             if draft["status"] != "pending":
-                return {"text": f"Draft #{draft_id} is already {draft['status']}."}
+                return _chat_response(f"Draft #{draft_id} is already {draft['status']}.", is_addon)
 
             await conn.execute(
                 "UPDATE email_drafts SET status = 'approved', approved_at = NOW() WHERE id = $1",
@@ -172,17 +199,17 @@ async def _approve_draft(params: dict, user: str) -> dict:
             )
 
         log.info("draft_approved_via_chat", draft_id=draft_id_int, user=user)
-        return {"text": f"Draft #{draft_id} approved by {user}. Sending email..."}
+        return _chat_response(f"Draft #{draft_id} approved by {user}. Sending email...", is_addon)
     except Exception as exc:
         log.warning("draft_approve_error", error=str(exc))
-        return {"text": f"Error approving draft: {exc}"}
+        return _chat_response(f"Error approving draft: {exc}", is_addon)
 
 
-async def _reject_draft(params: dict, user: str) -> dict:
+async def _reject_draft(params: dict, user: str, is_addon: bool) -> dict:
     """Reject a draft from Chat card button."""
     draft_id = params.get("draft_id")
     if not draft_id:
-        return {"text": "Error: No draft_id provided."}
+        return _chat_response("Error: No draft_id provided.", is_addon)
 
     try:
         draft_id_int = int(draft_id)
@@ -194,13 +221,16 @@ async def _reject_draft(params: dict, user: str) -> dict:
             )
 
         log.info("draft_rejected_via_chat", draft_id=draft_id_int, user=user)
-        return {"text": f"Draft #{draft_id} rejected by {user}."}
+        return _chat_response(f"Draft #{draft_id} rejected by {user}.", is_addon)
     except Exception as exc:
         log.warning("draft_reject_error", error=str(exc))
-        return {"text": f"Error rejecting draft: {exc}"}
+        return _chat_response(f"Error rejecting draft: {exc}", is_addon)
 
 
-async def _edit_draft_redirect(params: dict) -> dict:
+def _edit_draft_redirect(params: dict, is_addon: bool) -> dict:
     """Redirect user to the dashboard to edit a draft."""
     draft_id = params.get("draft_id", "")
-    return {"text": f"Open the dashboard to edit draft #{draft_id}: https://dashboard-alpha-lovat-14.vercel.app"}
+    return _chat_response(
+        f"Open the dashboard to edit draft #{draft_id}: https://dashboard-alpha-lovat-14.vercel.app",
+        is_addon,
+    )

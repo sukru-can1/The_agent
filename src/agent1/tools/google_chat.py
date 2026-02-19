@@ -112,7 +112,7 @@ class GChatPostMessageTool(BaseTool):
 
 class GChatReplyAsAgentTool(BaseTool):
     name = "gchat_reply_as_agent"
-    description = "Reply to a Google Chat message on behalf of the agent. Always prefixes with '[via The Agent1]'."
+    description = "Reply to a Google Chat message on behalf of the agent."
     input_schema = {
         "type": "object",
         "properties": {
@@ -135,10 +135,7 @@ class GChatReplyAsAgentTool(BaseTool):
         space_name = _resolve_space(space)
         request_id = uuid.uuid4().hex
 
-        # Always prefix with agent tag
-        prefixed_message = f"[via The Agent1] {raw_message}"
-
-        body: dict[str, Any] = {"text": prefixed_message}
+        body: dict[str, Any] = {"text": raw_message}
 
         if thread_key:
             body["thread"] = {"threadKey": thread_key}
