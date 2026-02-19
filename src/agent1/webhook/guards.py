@@ -72,24 +72,17 @@ async def verify_google_chat_token(
             except Exception:
                 pass
 
-        # Try multiple cert sources for verification
-        gsuiteaddons_sa = f"service-{settings.google_project_number}@gcp-sa-gsuiteaddons.iam.gserviceaccount.com"
+        # Google Chat HTTP endpoints sign JWTs with issuer=accounts.google.com
+        # and audience=the webhook URL. Verify using Google's OAuth2 certs.
+        webhook_url = f"https://webhook-production-50a3.up.railway.app/webhooks/gchat"
         claim = None
         last_error = None
 
-        for certs_url in (
-            "https://www.googleapis.com/service_accounts/v1/metadata/x509/"
-            + gsuiteaddons_sa,
-            None,  # default Google OAuth2 certs
-            "https://www.googleapis.com/service_accounts/v1/metadata/x509/"
-            + _GOOGLE_CHAT_ISSUER,
-        ):
+        # Try with webhook URL as audience (actual behavior), then project number
+        for audience in (webhook_url, settings.google_project_number):
             try:
-                kwargs = {"audience": settings.google_project_number}
-                if certs_url:
-                    kwargs["certs_url"] = certs_url
                 claim = google_id_token.verify_token(
-                    token, google_request, **kwargs,
+                    token, google_request, audience=audience,
                 )
                 break
             except Exception as exc:
