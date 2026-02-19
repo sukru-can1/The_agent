@@ -54,7 +54,7 @@ export default function StatusBar({
             />
           </div>
           <div>
-            <h1 className="font-bold text-base leading-tight">Atlas</h1>
+            <h1 className="font-bold text-base leading-tight">The Agent1</h1>
             <p className="text-[11px] text-[var(--color-text-muted)]">
               {connected ? "Online" : "Connecting..."}
             </p>

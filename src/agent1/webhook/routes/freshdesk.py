@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 
 from agent1.common.logging import get_logger
 from agent1.common.models import Event, EventSource, Priority
 from agent1.queue.publisher import publish_event
+from agent1.webhook.guards import verify_freshdesk_webhook
 
 log = get_logger(__name__)
 
 router = APIRouter(tags=["webhooks"])
 
 
-@router.post("/freshdesk")
+@router.post("/freshdesk", dependencies=[Depends(verify_freshdesk_webhook)])
 async def freshdesk_webhook(request: Request):
     """Handle incoming Freshdesk ticket events."""
     body = await request.json()

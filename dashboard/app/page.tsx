@@ -41,7 +41,7 @@ const DEMO_DRAFTS: Draft[] = [
     to_address: "sukru@glamira.com",
     subject: "Q4 Sales Report — Final Numbers",
     draft_body:
-      "[via AGENT1] Hi Maria,\n\nThanks for sending the final Q4 numbers. I'll review them this afternoon and follow up with any questions.\n\nBest,\nSukru",
+      "[via The Agent1] Hi Maria,\n\nThanks for sending the final Q4 numbers. I'll review them this afternoon and follow up with any questions.\n\nBest,\nSukru",
     status: "pending",
     classification: "fyi",
     created_at: new Date(Date.now() - 12 * 60000).toISOString(),

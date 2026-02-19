@@ -116,22 +116,31 @@ class DriveReadDocumentTool(BaseTool):
                     content = content_bytes.decode("utf-8", errors="replace")
                 else:
                     content = str(content_bytes)
+            elif mime_type == "application/pdf":
+                # PDF files: download and extract text
+                raw_bytes = await asyncio.to_thread(
+                    service.files().get_media(fileId=file_id).execute,
+                )
+                if not isinstance(raw_bytes, bytes):
+                    raw_bytes = str(raw_bytes).encode("utf-8")
+                content = _extract_pdf_text(raw_bytes)
+            elif mime_type.startswith("application/vnd.google-apps.spreadsheet"):
+                # Google Sheets: export as CSV
+                content_bytes = await asyncio.to_thread(
+                    service.files()
+                    .export(fileId=file_id, mimeType="text/csv")
+                    .execute,
+                )
+                content = content_bytes.decode("utf-8", errors="replace") if isinstance(content_bytes, bytes) else str(content_bytes)
             else:
-                # Other files (PDFs, etc.): download binary content
-                request = service.files().get_media(fileId=file_id)
-
-                buffer = io.BytesIO()
-
-                # Use the googleapiclient MediaIoBaseDownload for streaming,
-                # but for simplicity we can also just execute and read
-                raw_bytes = await asyncio.to_thread(request.execute)
-
+                # Other binary files: attempt UTF-8 decode
+                raw_bytes = await asyncio.to_thread(
+                    service.files().get_media(fileId=file_id).execute,
+                )
                 if isinstance(raw_bytes, bytes):
-                    buffer.write(raw_bytes)
+                    content = raw_bytes.decode("utf-8", errors="replace")
                 else:
-                    buffer.write(str(raw_bytes).encode("utf-8"))
-
-                content = buffer.getvalue().decode("utf-8", errors="replace")
+                    content = str(raw_bytes)
 
             # Truncate to max_length
             truncated = len(content) > max_length
@@ -154,3 +163,24 @@ class DriveReadDocumentTool(BaseTool):
         except Exception as exc:
             log.error("drive_read_document_error", file_id=file_id, error=str(exc))
             return {"error": f"Failed to read document {file_id}: {exc}"}
+
+
+def _extract_pdf_text(pdf_bytes: bytes) -> str:
+    """Extract text from PDF bytes using PyPDF2 (lightweight, no native deps)."""
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        pages = []
+        for page in reader.pages:
+            text = page.extract_text()
+            if text:
+                pages.append(text)
+        return "\n\n".join(pages) if pages else "(PDF contained no extractable text)"
+    except ImportError:
+        log.warning("pypdf_not_installed")
+        # Fallback: try basic text extraction
+        return pdf_bytes.decode("utf-8", errors="replace")
+    except Exception as exc:
+        log.warning("pdf_extraction_failed", error=str(exc))
+        return f"(PDF text extraction failed: {exc})"

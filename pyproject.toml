@@ -21,6 +21,7 @@ dependencies = [
     "structlog>=24.4",
     "python-dateutil>=2.9",
     "python-Levenshtein>=0.26",
+    "pypdf>=4.0",
 ]
 
 [dependency-groups]

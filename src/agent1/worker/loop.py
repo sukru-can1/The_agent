@@ -261,7 +261,7 @@ async def _handle_chat_auto_response(
             model=settings.claude_model_haiku,
             max_tokens=500,
             system=(
-                "You are Atlas, GLAMIRA's operations assistant. "
+                "You are The Agent1, GLAMIRA's operations assistant. "
                 "Answer the question briefly and helpfully. "
                 "If you're not confident in the answer, say so."
                 + context_str

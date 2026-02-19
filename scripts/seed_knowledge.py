@@ -81,7 +81,27 @@ SEED_KNOWLEDGE = [
     },
     {
         "category": "autonomy_rule",
-        "content": "Can auto-respond to internal team members for routine acknowledgments only. Prefix with '[via AGENT1]'.",
+        "content": "Can auto-respond to internal team members for routine acknowledgments only. Prefix with '[via The Agent1]'.",
+        "source": "configured",
+    },
+    {
+        "category": "business_rule",
+        "content": "Freshdesk priority mapping: 4=Urgent, 3=High, 2=Medium, 1=Low. Tickets with priority 3+ should always be flagged.",
+        "source": "configured",
+    },
+    {
+        "category": "pattern",
+        "content": "Negative Trustpilot reviews with stars <=2 require immediate attention. Check if the reviewer is a real customer and flag for legal analysis if defamatory.",
+        "source": "configured",
+    },
+    {
+        "category": "business_rule",
+        "content": "Standard delivery times: DE 3-5 business days, TR 5-7 business days, US 7-10 business days, UK 5-7 business days. Custom/engraved items add 3-5 days.",
+        "source": "configured",
+    },
+    {
+        "category": "escalation_rule",
+        "content": "Negative CSAT trend (50%+ increase in complaints for a market within 24h) should trigger a proactive alert to Sukru.",
         "source": "configured",
     },
 ]

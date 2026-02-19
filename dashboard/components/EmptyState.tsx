@@ -3,11 +3,11 @@
 import { CheckCircle2, Coffee } from "lucide-react";
 
 const messages = [
-  "All clear. Atlas is handling things.",
+  "All clear. The Agent1 is handling things.",
   "Nothing pending. Grab a coffee.",
-  "Queue empty. Atlas is on watch.",
+  "Queue empty. The Agent1 is on watch.",
   "All caught up. Nice work, boss.",
-  "Zero items. Atlas has it covered.",
+  "Zero items. The Agent1 has it covered.",
 ];
 
 export default function EmptyState() {

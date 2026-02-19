@@ -4,20 +4,21 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 
 from agent1.common.db import get_pool
 from agent1.common.logging import get_logger
 from agent1.common.models import Event, EventSource, Priority
 from agent1.common.settings import get_settings
 from agent1.queue.publisher import publish_event
+from agent1.webhook.guards import verify_google_chat_token
 
 log = get_logger(__name__)
 
 router = APIRouter(tags=["webhooks"])
 
 
-@router.post("/gchat")
+@router.post("/gchat", dependencies=[Depends(verify_google_chat_token)])
 async def gchat_webhook(request: Request):
     """Handle incoming Google Chat events (messages, button clicks, etc.)."""
     body = await request.json()

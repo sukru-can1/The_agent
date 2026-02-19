@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Atlas — GLAMIRA Ops Agent",
+  title: "The Agent1 — GLAMIRA Ops Agent",
   description: "Operations dashboard for GLAMIRA's AI agent",
 };
 

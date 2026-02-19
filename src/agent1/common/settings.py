@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     langfuse_host: str = "https://cloud.langfuse.com"
 
     # --- Agent ---
-    agent_name: str = "Atlas"
+    agent_name: str = "The Agent1"
     heartbeat_interval_seconds: int = 300
     log_level: str = "INFO"
     environment: str = "development"
@@ -70,6 +70,10 @@ class Settings(BaseSettings):
     # --- Webhook server ---
     webhook_host: str = "0.0.0.0"
     webhook_port: int = 8080
+
+    # --- Webhook security ---
+    google_project_number: str = ""  # Google Cloud project number for Chat JWT verification
+    freshdesk_webhook_secret: str = ""  # Shared secret for Freshdesk webhooks
 
     # --- Queue ---
     queue_max_retries: int = 3
