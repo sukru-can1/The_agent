@@ -38,7 +38,7 @@ async def reason_and_act(
         log.warning("no_api_key_skipping_reasoning")
         return {"model_used": "none", "input_tokens": 0, "output_tokens": 0, "result": "skipped"}
 
-    model = select_model(classification)
+    model = select_model(classification, event)
     client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
     tools = get_tool_definitions()
 

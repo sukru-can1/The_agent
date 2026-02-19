@@ -86,17 +86,6 @@ async def process_event(event: Event) -> None:
         await _handle_summary_event(event, start)
         return
 
-    # Step 1c: Auto-respond to simple Chat questions
-    if (
-        event.source == EventSource.GCHAT
-        and event.event_type == "chat_message"
-        and classification.complexity == "simple"
-        and classification.needs_response
-    ):
-        handled = await _handle_chat_auto_response(event, classification, start)
-        if handled:
-            return
-
     # Step 2: Plan (skip for simple events)
     plan = None
     if classification.complexity != "simple":
@@ -125,6 +114,26 @@ async def process_event(event: Event) -> None:
     from agent1.reasoning.engine import reason_and_act
 
     result = await reason_and_act(event, classification, plan)
+
+    # Step 4b: Safety net — if Chat event and Claude didn't post a reply via tools,
+    # post the reasoning result as a Chat message
+    if (
+        event.source == EventSource.GCHAT
+        and classification.needs_response
+        and isinstance(result, dict)
+        and result.get("result")
+    ):
+        try:
+            from agent1.tools.google_chat import GChatReplyAsAgentTool
+
+            space = event.payload.get("space", "")
+            thread = event.payload.get("thread", "")
+            if space:
+                chat = GChatReplyAsAgentTool()
+                await chat.execute(space=space, thread_key=thread, message=result["result"])
+                log.info("chat_fallback_reply_sent", event_id=str(event.id))
+        except Exception as exc:
+            log.warning("chat_fallback_reply_failed", error=str(exc))
 
     elapsed_ms = int((time.monotonic() - start) * 1000)
 
