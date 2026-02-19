@@ -1,11 +1,12 @@
-"""Core Claude reasoning engine with tool_use loop."""
+"""Core Gemini reasoning engine with function-calling loop."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-import anthropic
+from google import genai
+from google.genai import types
 
 from agent1.common.logging import get_logger
 from agent1.common.models import ClassificationResult, Event
@@ -22,25 +23,60 @@ if _playbook_path.exists():
     OPS_PLAYBOOK = _playbook_path.read_text(encoding="utf-8")
 
 
+def _convert_schema(schema: dict) -> dict:
+    """Convert JSON Schema types to Gemini's uppercase type format."""
+    if not isinstance(schema, dict):
+        return schema
+
+    result = {}
+    for key, value in schema.items():
+        if key == "type" and isinstance(value, str):
+            result[key] = value.upper()
+        elif key == "properties" and isinstance(value, dict):
+            result[key] = {k: _convert_schema(v) for k, v in value.items()}
+        elif key == "items" and isinstance(value, dict):
+            result[key] = _convert_schema(value)
+        else:
+            result[key] = value
+    return result
+
+
+def _build_gemini_tools(tool_defs: list[dict]) -> list[types.Tool]:
+    """Convert Anthropic-style tool definitions to Gemini FunctionDeclarations."""
+    declarations = []
+    for td in tool_defs:
+        schema = td.get("input_schema", {})
+        converted = _convert_schema(schema)
+        declarations.append(
+            types.FunctionDeclaration(
+                name=td["name"],
+                description=td.get("description", ""),
+                parameters=converted if converted.get("properties") else None,
+            )
+        )
+    return [types.Tool(function_declarations=declarations)]
+
+
 @trace_operation("reason_and_act")
 async def reason_and_act(
     event: Event,
     classification: ClassificationResult,
     plan: dict | None = None,
 ) -> dict:
-    """Send event to Claude with tools, execute tool calls in a loop until done.
+    """Send event to Gemini with tools, execute function calls in a loop until done.
 
     Returns a dict with model_used, input_tokens, output_tokens, and result.
     """
     settings = get_settings()
 
-    if not settings.anthropic_api_key:
+    if not settings.gemini_api_key:
         log.warning("no_api_key_skipping_reasoning")
         return {"model_used": "none", "input_tokens": 0, "output_tokens": 0, "result": "skipped"}
 
     model = select_model(classification, event)
-    client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-    tools = get_tool_definitions()
+    client = genai.Client(api_key=settings.gemini_api_key)
+    tool_defs = get_tool_definitions()
+    gemini_tools = _build_gemini_tools(tool_defs)
 
     # Build context message
     context_parts = [
@@ -86,31 +122,42 @@ async def reason_and_act(
 
     context = "\n".join(context_parts)
 
-    messages = [{"role": "user", "content": context}]
+    # Build initial contents
+    contents = [types.Content(role="user", parts=[types.Part.from_text(text=context)])]
     total_input = 0
     total_output = 0
 
-    # Multi-turn tool_use loop
+    # Multi-turn function-calling loop
     max_turns = 10
+    tools_called: list[str] = []
     for turn in range(max_turns):
-        response = await client.messages.create(
+        response = await client.aio.models.generate_content(
             model=model,
-            max_tokens=4096,
-            system=OPS_PLAYBOOK,
-            tools=tools,
-            messages=messages,
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=OPS_PLAYBOOK or None,
+                max_output_tokens=4096,
+                tools=gemini_tools,
+            ),
         )
 
-        total_input += response.usage.input_tokens
-        total_output += response.usage.output_tokens
+        total_input += response.usage_metadata.prompt_token_count or 0
+        total_output += response.usage_metadata.candidates_token_count or 0
 
-        # Check if Claude wants to call tools
-        tool_calls = [block for block in response.content if block.type == "tool_use"]
+        # Extract function calls from response parts
+        candidate = response.candidates[0]
+        function_calls = [
+            part for part in candidate.content.parts
+            if part.function_call
+        ]
 
-        if not tool_calls:
-            # Claude is done — extract final text response
-            text_blocks = [block.text for block in response.content if block.type == "text"]
-            final_text = "\n".join(text_blocks) if text_blocks else ""
+        if not function_calls:
+            # Gemini is done — extract final text
+            text_parts = [
+                part.text for part in candidate.content.parts
+                if part.text
+            ]
+            final_text = "\n".join(text_parts) if text_parts else ""
 
             log.info(
                 "reasoning_complete",
@@ -126,35 +173,38 @@ async def reason_and_act(
                 "output_tokens": total_output,
                 "result": final_text,
                 "turns": turn + 1,
+                "tools_called": tools_called,
             }
 
-        # Execute tool calls
-        messages.append({"role": "assistant", "content": response.content})
+        # Append model's response to conversation
+        contents.append(candidate.content)
 
-        tool_results = []
-        for call in tool_calls:
-            log.info("tool_call", tool=call.name, input=call.input)
+        # Execute function calls and build response parts
+        fn_response_parts = []
+        for part in function_calls:
+            fc = part.function_call
+            tools_called.append(fc.name)
+            log.info("tool_call", tool=fc.name, input=dict(fc.args) if fc.args else {})
             try:
-                result = await execute_tool(call.name, call.input)
-                tool_results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": call.id,
-                        "content": json.dumps(result, default=str) if not isinstance(result, str) else result,
-                    }
+                result = await execute_tool(fc.name, dict(fc.args) if fc.args else {})
+                result_data = json.dumps(result, default=str) if not isinstance(result, str) else result
+                fn_response_parts.append(
+                    types.Part.from_function_response(
+                        name=fc.name,
+                        response={"result": result_data},
+                    )
                 )
             except Exception as exc:
-                log.exception("tool_execution_error", tool=call.name)
-                tool_results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": call.id,
-                        "content": f"Error: {exc}",
-                        "is_error": True,
-                    }
+                log.exception("tool_execution_error", tool=fc.name)
+                fn_response_parts.append(
+                    types.Part.from_function_response(
+                        name=fc.name,
+                        response={"error": str(exc)},
+                    )
                 )
 
-        messages.append({"role": "user", "content": tool_results})
+        # Send function results back as user turn
+        contents.append(types.Content(role="user", parts=fn_response_parts))
 
     log.warning("reasoning_max_turns_reached", model=model, turns=max_turns)
     return {
@@ -163,4 +213,5 @@ async def reason_and_act(
         "output_tokens": total_output,
         "result": "max_turns_reached",
         "turns": max_turns,
+        "tools_called": tools_called,
     }

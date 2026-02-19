@@ -34,8 +34,17 @@ def _normalize_body(body: dict) -> tuple[dict, bool]:
         chat = body["chat"]
         # Workspace Add-on format — unwrap messagePayload
         payload = chat.get("messagePayload", {})
+
+        # Determine event type: check chat.type, then top-level type.
+        # ADDED_TO_SPACE / REMOVED_FROM_SPACE have no messagePayload.
+        event_type = (
+            chat.get("type")
+            or body.get("type")
+            or ("MESSAGE" if payload else "ADDED_TO_SPACE")
+        )
+
         normalized = {
-            "type": chat.get("type", "MESSAGE"),
+            "type": event_type,
             "eventTime": chat.get("eventTime"),
             "message": payload.get("message", {}),
             "space": payload.get("space", chat.get("space", {})),
@@ -69,6 +78,8 @@ def _chat_response(text: str, is_addon: bool) -> dict:
 async def gchat_webhook(request: Request):
     """Handle incoming Google Chat events (messages, button clicks, etc.)."""
     raw_body = await request.json()
+    log.info("gchat_raw_body", keys=list(raw_body.keys()),
+             chat_keys=list(raw_body["chat"].keys()) if "chat" in raw_body else None)
 
     # Normalize to handle both legacy and Workspace Add-on event formats
     body, is_addon = _normalize_body(raw_body)
@@ -110,6 +121,9 @@ async def _handle_message(body: dict, is_addon: bool) -> dict:
 
     log.info("gchat_message_text", text=text[:200] if text else "(empty)",
              sender=sender, sender_email=sender_email)
+
+    if not text:
+        return _chat_response("Hi! Send me a message and I'll help.", is_addon)
 
     # Check if this is a teachable rule
     teach_indicators = ["from now on", "remember that", "always ", "never ", "stop doing"]

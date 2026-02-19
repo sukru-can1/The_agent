@@ -2,6 +2,7 @@ export interface AgentStatus {
   queue_depth: number;
   pending_drafts: number;
   dlq_count: number;
+  is_paused: boolean;
   last_action: {
     timestamp: string;
     system: string;
@@ -29,6 +30,7 @@ export interface AgentEvent {
   status: string;
   created_at: string;
   error: string | null;
+  payload: Record<string, unknown> | null;
 }
 
 export interface DlqEntry {
@@ -42,20 +44,127 @@ export interface DlqEntry {
   created_at: string;
 }
 
-export type CardType = "draft" | "alert" | "question" | "info" | "error";
-
-export interface ActionCard {
-  id: string;
-  type: CardType;
-  title: string;
-  subtitle?: string;
-  body: string;
-  priority: "critical" | "high" | "medium" | "low";
+export interface AgentAction {
+  id: number;
   timestamp: string;
-  actions: Array<{
-    label: string;
-    variant: "primary" | "secondary" | "danger";
-    onClick: () => void;
-  }>;
-  meta?: Record<string, string>;
+  system: string;
+  action_type: string;
+  outcome: string;
+  model_used: string;
+  input_tokens: number;
+  output_tokens: number;
+  latency_ms: number;
+  details: Record<string, unknown> | null;
+}
+
+export interface Integration {
+  id: string;
+  name: string;
+  active: boolean;
+}
+
+export interface KnowledgeEntry {
+  id: number;
+  category: string;
+  content: string;
+  source: string;
+  created_at: string;
+  active: boolean;
+  confidence: number;
+  supersedes_id: number | null;
+}
+
+export type Category = "cs" | "finance" | "operations" | "website" | "marketing" | "system";
+
+export const CATEGORY_CONFIG: Record<Category, { label: string; color: string; bg: string }> = {
+  cs: { label: "CS", color: "#22d3ee", bg: "bg-cyan-500/10 text-cyan-400" },
+  finance: { label: "Finance", color: "#fbbf24", bg: "bg-amber-500/10 text-amber-400" },
+  operations: { label: "Ops", color: "#818cf8", bg: "bg-indigo-500/10 text-indigo-400" },
+  website: { label: "Web", color: "#34d399", bg: "bg-emerald-500/10 text-emerald-400" },
+  marketing: { label: "Mktg", color: "#c084fc", bg: "bg-purple-500/10 text-purple-400" },
+  system: { label: "Sys", color: "#64748b", bg: "bg-slate-500/10 text-slate-400" },
+};
+
+export function getCategory(source: string, eventType: string): Category {
+  if (source === "freshdesk" || source === "feedbacks") return "cs";
+  if (eventType.includes("payment") || eventType.includes("refund")) return "finance";
+  if (source === "starinfinity") return "operations";
+  if (eventType.includes("seo") || eventType.includes("website")) return "website";
+  if (eventType.includes("campaign") || eventType.includes("marketing")) return "marketing";
+  if (source === "gmail") return "operations";
+  if (source === "gchat") return "operations";
+  return "system";
+}
+
+export function extractDetail(source: string, payload: Record<string, unknown> | null): string {
+  if (!payload) return "";
+  if (source === "freshdesk") {
+    return `Ticket #${payload.ticket_id ?? ""} — ${payload.subject ?? ""}`;
+  }
+  if (source === "gmail") {
+    return `From: ${payload.from_address ?? payload.sender ?? ""} — ${payload.subject ?? ""}`;
+  }
+  if (source === "gchat") {
+    const text = String(payload.text ?? "").slice(0, 120);
+    return `${payload.sender ?? ""}: "${text}"`;
+  }
+  if (source === "starinfinity") {
+    return `Board: ${payload.board_name ?? ""} — ${payload.task_title ?? ""}`;
+  }
+  if (source === "feedbacks") {
+    return `${payload.customer_email ?? ""} — Rating: ${payload.rating ?? ""}`;
+  }
+  return JSON.stringify(payload).slice(0, 150);
+}
+
+export interface ActionSummary {
+  eventSummary: string;
+  toolsUsed: string[];
+  agentResponse: string;
+  externalLink: string | null;
+}
+
+export function extractActionSummary(action: AgentAction): ActionSummary {
+  const d = action.details ?? {};
+  const classification = (d.classification as Record<string, unknown>) ?? {};
+
+  // Event summary from enriched details or fallback
+  let eventSummary = (d.event_summary as string) || "";
+  if (!eventSummary) {
+    eventSummary = action.action_type.replace(/_/g, " ");
+  }
+
+  // Tools called
+  const toolsUsed = (d.tools_called as string[]) || [];
+
+  // Agent response (first 300 chars stored by backend)
+  const agentResponse = (d.agent_response as string) || "";
+
+  // Try to build an external link
+  let externalLink: string | null = null;
+  const eventPayload = d.event_payload as Record<string, unknown> | undefined;
+  const source = action.system;
+  if (source === "freshdesk") {
+    const ticketId = (d.ticket_id as string) || (eventPayload?.ticket_id as string);
+    if (ticketId) {
+      externalLink = `https://glmr.freshdesk.com/a/tickets/${ticketId}`;
+    }
+  } else if (source === "gmail") {
+    const threadId = (eventPayload?.gmail_thread_id as string) || (eventPayload?.thread_id as string);
+    if (threadId) {
+      externalLink = `https://mail.google.com/mail/u/0/#inbox/${threadId}`;
+    }
+  }
+
+  return { eventSummary, toolsUsed, agentResponse, externalLink };
+}
+
+export function timeAgo(ts: string): string {
+  const diff = Date.now() - new Date(ts).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
 }

@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from agent1.common.db import get_pool
 from agent1.common.logging import get_logger
 from agent1.common.redis_client import get_redis
+from agent1.common.settings import get_settings
 from agent1.queue.dlq import get_dlq_entries, resolve_dlq_entry, retry_dlq_entry
 from agent1.queue.events import QUEUE_KEY
 
@@ -38,10 +39,13 @@ async def admin_status():
             "SELECT COUNT(*) FROM dead_letter_events WHERE resolved_at IS NULL"
         )
 
+    is_paused = await redis.exists("agent1:queue:paused") == 1
+
     return {
         "queue_depth": queue_depth,
         "pending_drafts": pending_drafts,
         "dlq_count": dlq_count,
+        "is_paused": is_paused,
         "last_action": dict(last_action) if last_action else None,
     }
 
@@ -73,7 +77,7 @@ async def list_events(status: str = "pending", limit: int = 50):
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT id, source, event_type, priority, status, created_at, error
+            SELECT id, source, event_type, priority, status, created_at, error, payload
             FROM events
             WHERE status = $1
             ORDER BY created_at DESC
@@ -272,11 +276,12 @@ async def analytics_daily_costs(days: int = 30):
             days,
         )
 
-    # Compute estimated costs per model
+    # Compute estimated costs per model (per 1M tokens)
     cost_map = {
-        "claude-3-5-haiku-20241022": {"input": 1.0, "output": 5.0},
-        "claude-sonnet-4-20250514": {"input": 3.0, "output": 15.0},
-        "claude-opus-4-20250514": {"input": 15.0, "output": 75.0},
+        "gemini-2.0-flash": {"input": 0.10, "output": 0.40},
+        "gemini-2.5-flash": {"input": 0.15, "output": 0.60},
+        "gemini-2.5-pro": {"input": 1.25, "output": 10.0},
+        "gemini-3-pro": {"input": 1.25, "output": 10.0},
     }
 
     results = []
@@ -458,29 +463,42 @@ class InjectEventBody(BaseModel):
 
 @router.post("/inject-event")
 async def inject_event(body: InjectEventBody):
-    """Inject a test event into the queue (for debugging/testing)."""
+    """Inject an event into the queue. Use source='dashboard' for dashboard chat."""
     from agent1.common.models import Event, EventSource, Priority
     from agent1.queue.publisher import publish_event
     from agent1.common.settings import get_settings
 
     settings = get_settings()
-    space = body.space or settings.gchat_dm_sukru or ""
 
-    event = Event(
-        source=EventSource(body.source),
-        event_type=body.event_type,
-        priority=Priority.HIGH,
-        payload={
-            "text": body.text,
-            "space": space,
-            "thread": body.thread,
-            "sender": "Admin (test)",
-            "sender_email": settings.gchat_user_email,
-        },
-    )
+    if body.source == "dashboard":
+        event = Event(
+            source=EventSource.DASHBOARD,
+            event_type=body.event_type,
+            priority=Priority.HIGH,
+            payload={
+                "text": body.text,
+                "sender": "Dashboard",
+                "sender_email": settings.gchat_user_email,
+            },
+        )
+    else:
+        space = body.space or settings.gchat_dm_sukru or ""
+        event = Event(
+            source=EventSource(body.source),
+            event_type=body.event_type,
+            priority=Priority.HIGH,
+            payload={
+                "text": body.text,
+                "space": space,
+                "thread": body.thread,
+                "sender": "Admin (test)",
+                "sender_email": settings.gchat_user_email,
+            },
+        )
+
     await publish_event(event)
-    log.info("test_event_injected", event_id=str(event.id), text=body.text[:80])
-    return {"status": "published", "event_id": str(event.id), "space": space}
+    log.info("event_injected", event_id=str(event.id), source=body.source, text=body.text[:80])
+    return {"status": "published", "event_id": str(event.id)}
 
 
 @router.get("/knowledge")
@@ -503,19 +521,129 @@ async def list_knowledge(limit: int = 50):
 
 
 @router.get("/actions")
-async def list_actions(limit: int = 50):
-    """List recent agent actions (audit log)."""
+async def list_actions(limit: int = 50, event_id: Optional[str] = None):
+    """List recent agent actions (audit log). Optionally filter by event_id."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        if event_id:
+            rows = await conn.fetch(
+                """
+                SELECT id, timestamp, system, action_type, outcome,
+                       model_used, input_tokens, output_tokens, latency_ms, details, event_id
+                FROM actions_log
+                WHERE event_id = $1
+                ORDER BY timestamp DESC
+                """,
+                event_id,
+            )
+        else:
+            rows = await conn.fetch(
+                """
+                SELECT id, timestamp, system, action_type, outcome,
+                       model_used, input_tokens, output_tokens, latency_ms, details, event_id
+                FROM actions_log
+                ORDER BY timestamp DESC
+                LIMIT $1
+                """,
+                limit,
+            )
+    return [dict(r) for r in rows]
+
+
+@router.get("/actions/{action_id}")
+async def get_action(action_id: int):
+    """Get a single action with full details and joined event data."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT a.id, a.timestamp, a.system, a.action_type, a.outcome,
+                   a.model_used, a.input_tokens, a.output_tokens, a.latency_ms,
+                   a.details, a.event_id,
+                   e.source AS event_source, e.event_type AS event_event_type,
+                   e.priority AS event_priority, e.payload AS event_payload,
+                   e.status AS event_status, e.created_at AS event_created_at
+            FROM actions_log a
+            LEFT JOIN events e ON e.id::text = a.event_id
+            WHERE a.id = $1
+            """,
+            action_id,
+        )
+    if not row:
+        raise HTTPException(status_code=404, detail="Action not found")
+    return dict(row)
+
+
+@router.get("/events/{event_id}")
+async def get_event(event_id: str):
+    """Get a single event by UUID (for polling completion status)."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT id, source, event_type, priority, status, created_at, processed_at, error, payload
+            FROM events
+            WHERE id = $1
+            """,
+            event_id,
+        )
+    if not row:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return dict(row)
+
+
+@router.get("/chat-history")
+async def chat_history(limit: int = 20):
+    """Recent dashboard conversations from the conversations table."""
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT id, timestamp, system, action_type, outcome,
-                   model_used, input_tokens, output_tokens, latency_ms
-            FROM actions_log
+            SELECT id, timestamp, user_name, message_in, message_out, context
+            FROM conversations
+            WHERE platform = 'dashboard'
             ORDER BY timestamp DESC
             LIMIT $1
             """,
             limit,
         )
     return [dict(r) for r in rows]
+
+
+class StoreKnowledgeBody(BaseModel):
+    category: str = "operator_instruction"
+    content: str
+    source: str = "dashboard"
+
+
+@router.post("/knowledge")
+async def store_knowledge_entry(body: StoreKnowledgeBody):
+    """Store an operator instruction or comment as knowledge."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """INSERT INTO knowledge (category, content, source, confidence)
+               VALUES ($1, $2, $3, 1.0) RETURNING id, created_at""",
+            body.category,
+            body.content,
+            body.source,
+        )
+    log.info("knowledge_stored", id=row["id"], category=body.category)
+    return {"id": row["id"], "created_at": str(row["created_at"])}
+
+
+@router.get("/integrations")
+async def list_integrations():
+    """List configured integrations and their status."""
+    settings = get_settings()
+    return [
+        {"id": "gmail", "name": "Gmail", "active": bool(settings.google_refresh_token)},
+        {"id": "gchat", "name": "Google Chat", "active": bool(settings.gchat_space_alerts)},
+        {"id": "freshdesk", "name": "Freshdesk", "active": bool(settings.freshdesk_api_key)},
+        {"id": "starinfinity", "name": "StarInfinity", "active": bool(settings.starinfinity_api_key)},
+        {"id": "feedbacks", "name": "Feedbacks DB", "active": bool(settings.feedbacks_database_url)},
+        {"id": "voyage", "name": "Voyage AI", "active": bool(settings.voyage_api_key)},
+        {"id": "langfuse", "name": "LangFuse", "active": bool(settings.langfuse_public_key)},
+        {"id": "mcp", "name": "MCP Tools", "active": settings.dynamic_tools_enabled},
+    ]
 

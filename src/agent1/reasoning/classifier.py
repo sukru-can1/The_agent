@@ -1,11 +1,12 @@
-"""Haiku-based fast event classification."""
+"""Fast event classification using Gemini Flash."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-import anthropic
+from google import genai
+from google.genai import types
 
 from agent1.common.logging import get_logger
 from agent1.common.models import (
@@ -26,14 +27,13 @@ CLASSIFIER_PROMPT = (Path(__file__).parent / "prompts" / "classifier.md").read_t
 
 @trace_operation("classify_event")
 async def classify_event(event: Event) -> ClassificationResult:
-    """Classify an event using Haiku for fast, cheap categorization.
+    """Classify an event using Gemini Flash for fast, cheap categorization.
 
     Returns a ClassificationResult with category, urgency, complexity, etc.
-    Cost: ~$0.001 per classification.
     """
     settings = get_settings()
 
-    if not settings.anthropic_api_key:
+    if not settings.gemini_api_key:
         # Fallback classification when no API key (dev/testing)
         return ClassificationResult(
             category=event.event_type,
@@ -43,7 +43,7 @@ async def classify_event(event: Event) -> ClassificationResult:
             confidence=0.5,
         )
 
-    client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+    client = genai.Client(api_key=settings.gemini_api_key)
 
     context = json.dumps(
         {
@@ -55,19 +55,16 @@ async def classify_event(event: Event) -> ClassificationResult:
     )
 
     try:
-        response = await client.messages.create(
-            model=settings.claude_model_haiku,
-            max_tokens=500,
-            system=CLASSIFIER_PROMPT or "Classify this event. Respond with valid JSON only.",
-            messages=[
-                {
-                    "role": "user",
-                    "content": f"Classify this event:\n\n{context}",
-                }
-            ],
+        response = await client.aio.models.generate_content(
+            model=settings.gemini_model_fast,
+            contents=f"Classify this event:\n\n{context}",
+            config=types.GenerateContentConfig(
+                system_instruction=CLASSIFIER_PROMPT or "Classify this event. Respond with valid JSON only.",
+                max_output_tokens=500,
+            ),
         )
 
-        text = response.content[0].text.strip()
+        text = response.text.strip()
         # Parse JSON from response
         if text.startswith("```"):
             text = text.split("```")[1]

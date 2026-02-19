@@ -33,7 +33,7 @@ export default function EditModal({
       />
 
       {/* Modal */}
-      <div className="relative w-full max-w-2xl bg-[var(--color-surface)] rounded-3xl border border-[var(--color-border)] shadow-2xl card-enter overflow-hidden">
+      <div className="relative w-full max-w-2xl bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] shadow-2xl card-enter overflow-hidden">
         {/* Header */}
         <div className="px-6 pt-5 pb-3 flex items-start justify-between">
           <div>
@@ -47,7 +47,7 @@ export default function EditModal({
           </div>
           <button
             onClick={onClose}
-            className="p-2 rounded-xl hover:bg-[var(--color-surface-hover)] transition-colors"
+            className="p-2 rounded-md hover:bg-[var(--color-surface-hover)] transition-colors"
           >
             <X size={18} />
           </button>
@@ -59,7 +59,7 @@ export default function EditModal({
             value={body}
             onChange={(e) => setBody(e.target.value)}
             rows={12}
-            className="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded-2xl p-4 text-sm font-mono leading-relaxed resize-none focus:outline-none focus:border-[var(--color-accent)] transition-colors"
+            className="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg p-4 text-sm font-mono leading-relaxed resize-none focus:outline-none focus:border-[var(--color-accent)] transition-colors"
             autoFocus
           />
           {changed && (
@@ -73,7 +73,7 @@ export default function EditModal({
         <div className="px-6 pb-5 flex items-center justify-between">
           <button
             onClick={onClose}
-            className="px-4 py-2 rounded-xl text-sm font-medium bg-[var(--color-surface-hover)] hover:bg-[var(--color-border)] transition-all btn-press"
+            className="px-4 py-2 rounded-md text-sm font-medium bg-[var(--color-surface-hover)] hover:bg-[var(--color-border)] transition-all btn-press"
           >
             Cancel
           </button>
@@ -84,7 +84,7 @@ export default function EditModal({
               await onSave(body);
               setSaving(false);
             }}
-            className="px-6 py-2 rounded-xl text-sm font-medium bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-white shadow-lg shadow-indigo-500/10 transition-all btn-press disabled:opacity-40 disabled:cursor-not-allowed"
+            className="px-6 py-2 rounded-md text-sm font-medium bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-white shadow-lg shadow-indigo-500/10 transition-all btn-press disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {saving ? (
               <span className="flex items-center gap-2">

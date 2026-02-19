@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import time
 
-import anthropic
+from google import genai
+from google.genai import types
 
 from agent1.common.db import get_pool
 from agent1.common.logging import get_logger
@@ -15,6 +16,36 @@ from agent1.common.redis_client import get_redis
 from agent1.common.settings import get_settings
 
 log = get_logger(__name__)
+
+
+def _extract_event_summary(event: Event) -> str:
+    """Build a short human-readable summary from event payload."""
+    p = event.payload
+    src = event.source.value
+    if src == "freshdesk":
+        tid = p.get("ticket_id", "")
+        subj = p.get("subject", "")
+        return f"Freshdesk Ticket #{tid} — {subj}" if tid else subj or event.event_type
+    if src == "gmail":
+        sender = p.get("from_address") or p.get("sender", "")
+        subj = p.get("subject", "")
+        return f"Email from {sender}: {subj}" if sender else subj or event.event_type
+    if src == "gchat":
+        sender = p.get("sender", "")
+        text = str(p.get("text", ""))[:80]
+        return f'{sender}: "{text}"' if sender else text or event.event_type
+    if src == "starinfinity":
+        board = p.get("board_name", "")
+        task = p.get("task_title", "")
+        return f"Board: {board} — {task}" if board else task or event.event_type
+    if src == "feedbacks":
+        email = p.get("customer_email", "")
+        rating = p.get("rating", "")
+        return f"{email} — Rating: {rating}" if email else event.event_type
+    if src == "dashboard":
+        text = str(p.get("text", ""))[:120]
+        return f"Dashboard: {text}" if text else event.event_type
+    return event.event_type
 
 
 async def _is_paused() -> bool:
@@ -115,8 +146,8 @@ async def process_event(event: Event) -> None:
 
     result = await reason_and_act(event, classification, plan)
 
-    # Step 4b: Safety net — if Chat event and Claude didn't post a reply via tools,
-    # post the reasoning result as a Chat message
+    # Step 4b: Safety net — if Chat event and Gemini didn't post a reply via tools,
+    # post the reasoning result as a Chat message (skip for dashboard-sourced events)
     if (
         event.source == EventSource.GCHAT
         and classification.needs_response
@@ -135,9 +166,34 @@ async def process_event(event: Event) -> None:
         except Exception as exc:
             log.warning("chat_fallback_reply_failed", error=str(exc))
 
+    # Step 4c: For dashboard-sourced events, store conversation
+    if event.source == EventSource.DASHBOARD and isinstance(result, dict):
+        try:
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO conversations (platform, user_id, user_name, message_in, message_out, context)
+                    VALUES ('dashboard', $1, $2, $3, $4, $5)
+                    """,
+                    event.payload.get("sender_email", "admin"),
+                    event.payload.get("sender", "Dashboard"),
+                    event.payload.get("text", ""),
+                    result.get("result", "")[:5000],
+                    json.dumps({"event_id": str(event.id), "tools_called": result.get("tools_called", [])}),
+                )
+        except Exception as exc:
+            log.warning("dashboard_conversation_store_failed", error=str(exc))
+
     elapsed_ms = int((time.monotonic() - start) * 1000)
 
-    # Step 5: Log the action
+    # Step 5: Log the action (enriched details)
+    agent_response = ""
+    tools_called: list[str] = []
+    if isinstance(result, dict):
+        agent_response = str(result.get("result", ""))[:300]
+        tools_called = result.get("tools_called", [])
+
     await _log_action(
         ActionLog(
             system=event.source.value,
@@ -146,6 +202,9 @@ async def process_event(event: Event) -> None:
                 "event_type": event.event_type,
                 "classification": classification.model_dump(),
                 "result_summary": str(result)[:500] if result else None,
+                "event_summary": _extract_event_summary(event),
+                "tools_called": tools_called,
+                "agent_response": agent_response,
             },
             outcome="success",
             model_used=result.get("model_used", "") if isinstance(result, dict) else "",
@@ -227,12 +286,12 @@ async def _handle_teachable_rule(event: Event, start: float) -> None:
 async def _handle_chat_auto_response(
     event: Event, classification: ClassificationResult, start: float
 ) -> bool:
-    """Auto-respond to simple Chat questions using Haiku.
+    """Auto-respond to simple Chat questions using Gemini 2.0 Flash.
 
     Returns True if handled, False to fall through to full reasoning.
     """
     settings = get_settings()
-    if not settings.anthropic_api_key:
+    if not settings.gemini_api_key:
         return False
 
     text = event.payload.get("text", "").strip()
@@ -267,26 +326,28 @@ async def _handle_chat_auto_response(
     except Exception:
         pass
 
-    # Quick Haiku response
+    # Quick Gemini 2.0 Flash response (fastest/cheapest)
     try:
-        client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-        response = await client.messages.create(
-            model=settings.claude_model_haiku,
-            max_tokens=500,
-            system=(
-                "You are The Agent1, GLAMIRA's operations assistant. "
-                "You were built by the GLAMIRA tech team to help with operations. "
-                "Stay in character at all times — you ARE The Agent1. "
-                "Answer questions briefly and helpfully. "
-                "If you don't know something specific about GLAMIRA operations, say so."
-                + context_str
+        client = genai.Client(api_key=settings.gemini_api_key)
+        response = await client.aio.models.generate_content(
+            model=settings.gemini_model_flash,
+            contents=text,
+            config=types.GenerateContentConfig(
+                system_instruction=(
+                    "You are The Agent1, GLAMIRA's operations assistant. "
+                    "You were built by the GLAMIRA tech team to help with operations. "
+                    "Stay in character at all times — you ARE The Agent1. "
+                    "Answer questions briefly and helpfully. "
+                    "If you don't know something specific about GLAMIRA operations, say so."
+                    + context_str
+                ),
+                max_output_tokens=500,
             ),
-            messages=[{"role": "user", "content": text}],
         )
 
-        answer = response.content[0].text.strip()
-        input_tokens = response.usage.input_tokens
-        output_tokens = response.usage.output_tokens
+        answer = response.text.strip()
+        input_tokens = response.usage_metadata.prompt_token_count
+        output_tokens = response.usage_metadata.candidates_token_count
 
         # Post reply via Chat
         from agent1.tools.google_chat import GChatReplyAsAgentTool
@@ -301,7 +362,7 @@ async def _handle_chat_auto_response(
                 action_type="auto_response",
                 details={"question": text[:200], "answer": answer[:200]},
                 outcome="success",
-                model_used=settings.claude_model_haiku,
+                model_used=settings.gemini_model_flash,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 latency_ms=elapsed_ms,

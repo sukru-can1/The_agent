@@ -1,0 +1,22 @@
+import NextAuth from "next-auth";
+import Google from "next-auth/providers/google";
+
+export const { handlers, signIn, signOut, auth } = NextAuth({
+  providers: [
+    Google({
+      clientId: process.env.GOOGLE_CLIENT_ID!,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+    }),
+  ],
+  pages: {
+    signIn: "/login",
+  },
+  callbacks: {
+    signIn({ user }) {
+      return user?.email === "sukru.can@glamira-group.com";
+    },
+    authorized({ auth }) {
+      return !!auth?.user;
+    },
+  },
+});

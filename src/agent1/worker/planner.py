@@ -1,11 +1,12 @@
-"""Planning step before tool execution — uses Claude to create action plans."""
+"""Planning step before tool execution — uses Gemini to create action plans."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-from anthropic import AsyncAnthropic
+from google import genai
+from google.genai import types
 
 from agent1.common.logging import get_logger
 from agent1.common.models import ClassificationResult, Event
@@ -23,10 +24,10 @@ except FileNotFoundError:
 
 @trace_operation("create_plan")
 async def create_plan(event: Event, classification: ClassificationResult) -> dict:
-    """Ask Claude to create a plan of intended actions before executing tools.
+    """Ask Gemini to create a plan of intended actions before executing tools.
 
     For simple events, returns a lightweight plan without an API call.
-    For complex events, calls Haiku for fast planning.
+    For complex events, calls Flash for fast planning.
     """
     from agent1.reasoning.router import select_model
 
@@ -46,41 +47,38 @@ async def create_plan(event: Event, classification: ClassificationResult) -> dic
         log.info("plan_created", event_id=str(event.id), complexity="simple")
         return plan
 
-    # Complex events get a Claude-generated plan
+    # Complex events get a Gemini-generated plan
     settings = get_settings()
-    if not settings.anthropic_api_key:
+    if not settings.gemini_api_key:
         return _fallback_plan(event, classification, model)
 
     try:
-        client = AsyncAnthropic(api_key=settings.anthropic_api_key)
-        response = await client.messages.create(
-            model=settings.claude_model_haiku,
-            max_tokens=500,
-            system=PLANNER_PROMPT,
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
-                        f"Event: {event.event_type} from {event.source.value}\n"
-                        f"Priority: {event.priority}\n"
-                        f"Classification: category={classification.category}, "
-                        f"urgency={classification.urgency}, "
-                        f"complexity={classification.complexity.value}, "
-                        f"involves_vip={classification.involves_vip}, "
-                        f"involves_financial={classification.involves_financial}\n"
-                        f"Payload: {json.dumps(event.payload, default=str)[:1000]}"
-                    ),
-                }
-            ],
+        client = genai.Client(api_key=settings.gemini_api_key)
+        response = await client.aio.models.generate_content(
+            model=settings.gemini_model_fast,
+            contents=(
+                f"Event: {event.event_type} from {event.source.value}\n"
+                f"Priority: {event.priority}\n"
+                f"Classification: category={classification.category}, "
+                f"urgency={classification.urgency}, "
+                f"complexity={classification.complexity.value}, "
+                f"involves_vip={classification.involves_vip}, "
+                f"involves_financial={classification.involves_financial}\n"
+                f"Payload: {json.dumps(event.payload, default=str)[:1000]}"
+            ),
+            config=types.GenerateContentConfig(
+                system_instruction=PLANNER_PROMPT,
+                max_output_tokens=500,
+            ),
         )
 
-        plan_text = response.content[0].text.strip()
+        plan_text = response.text.strip()
         # Try to parse as JSON
         plan = json.loads(plan_text)
         plan["model"] = model
         plan["event_type"] = event.event_type
         plan["source"] = event.source.value
-        log.info("plan_created", event_id=str(event.id), complexity="complex", model=settings.claude_model_haiku)
+        log.info("plan_created", event_id=str(event.id), complexity="complex", model=settings.gemini_model_fast)
         return plan
 
     except (json.JSONDecodeError, Exception) as exc:

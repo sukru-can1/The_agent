@@ -30,6 +30,48 @@ export async function fetchDlq() {
   return res.json();
 }
 
+export async function fetchActions(limit = 100) {
+  const res = await fetch(`${API}/admin/actions?limit=${limit}`);
+  if (!res.ok) throw new Error("Failed to fetch actions");
+  return res.json();
+}
+
+export async function fetchKnowledge(limit = 100) {
+  const res = await fetch(`${API}/admin/knowledge?limit=${limit}`);
+  if (!res.ok) throw new Error("Failed to fetch knowledge");
+  return res.json();
+}
+
+export async function fetchIntegrations() {
+  const res = await fetch(`${API}/admin/integrations`);
+  if (!res.ok) throw new Error("Failed to fetch integrations");
+  return res.json();
+}
+
+export async function fetchConfig() {
+  const res = await fetch(`${API}/admin/config`);
+  if (!res.ok) throw new Error("Failed to fetch config");
+  return res.json();
+}
+
+export async function updateConfig(key: string, value: unknown) {
+  const res = await fetch(`${API}/admin/config/${key}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ value }),
+  });
+  return res.json();
+}
+
+export async function storeKnowledge(content: string, category = "operator_instruction") {
+  const res = await fetch(`${API}/admin/knowledge`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ category, content, source: "dashboard" }),
+  });
+  return res.json();
+}
+
 export async function approveDraft(draftId: number, editedBody?: string) {
   const res = await fetch(`${API}/admin/drafts/${draftId}/approve`, {
     method: "POST",
@@ -63,5 +105,14 @@ export async function pauseQueue() {
 
 export async function resumeQueue() {
   const res = await fetch(`${API}/admin/queue/resume`, { method: "POST" });
+  return res.json();
+}
+
+export async function injectEvent(text: string, source = "gchat", eventType = "chat_message") {
+  const res = await fetch(`${API}/admin/inject-event`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source, event_type: eventType, text }),
+  });
   return res.json();
 }

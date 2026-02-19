@@ -15,7 +15,7 @@ export default function EmptyState() {
 
   return (
     <div className="flex flex-col items-center justify-center py-24 text-center card-enter">
-      <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-emerald-500/10 to-emerald-500/5 flex items-center justify-center mb-6">
+      <div className="w-20 h-20 rounded-lg bg-gradient-to-br from-emerald-500/10 to-emerald-500/5 flex items-center justify-center mb-6">
         <CheckCircle2 size={36} className="text-emerald-400" />
       </div>
       <p className="text-lg font-medium text-[var(--color-text)]">{msg}</p>

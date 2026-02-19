@@ -41,6 +41,7 @@ class EventSource(StrEnum):
     FEEDBACKS = "feedbacks"
     SCHEDULER = "scheduler"
     ADMIN = "admin"
+    DASHBOARD = "dashboard"
 
 
 # --- Classification ---

@@ -11,11 +11,12 @@ class Settings(BaseSettings):
 
     model_config = {"env_prefix": "", "env_file": ".env", "extra": "ignore"}
 
-    # --- Anthropic ---
-    anthropic_api_key: str = ""
-    claude_model_default: str = "claude-sonnet-4-5-20250929"
-    claude_model_haiku: str = "claude-haiku-4-5-20251001"
-    claude_model_opus: str = "claude-opus-4-20250514"
+    # --- Google Gemini ---
+    gemini_api_key: str = ""
+    gemini_model_default: str = "gemini-2.5-pro"     # moderate
+    gemini_model_fast: str = "gemini-2.5-flash"      # classifier/planner
+    gemini_model_pro: str = "gemini-3-pro"           # most complex
+    gemini_model_flash: str = "gemini-2.0-flash"     # auto-response, trivial
 
     # --- Voyage AI ---
     voyage_api_key: str = ""

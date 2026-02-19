@@ -7,42 +7,60 @@
   --color-border: #1e1e2e;
   --color-border-hover: #2a2a3e;
   --color-text: #e4e4ef;
-  --color-text-muted: #6b6b80;
-  --color-text-dim: #3e3e52;
+  --color-text-muted: #8585a0;
+  --color-text-dim: #6e6e88;
   --color-accent: #818cf8;
   --color-accent-hover: #6366f1;
   --color-success: #34d399;
   --color-warning: #fbbf24;
   --color-danger: #f87171;
   --color-critical: #ef4444;
+
+  /* Category domain colors */
+  --color-cat-cs: #22d3ee;
+  --color-cat-finance: #fbbf24;
+  --color-cat-ops: #818cf8;
+  --color-cat-website: #34d399;
+  --color-cat-marketing: #c084fc;
+  --color-cat-system: #64748b;
+
+  /* Shell dimensions */
+  --sidebar-width: 56px;
+  --topbar-height: 48px;
 }
 
 body {
   background: var(--color-bg);
   color: var(--color-text);
-  font-family: "Inter", system-ui, -apple-system, sans-serif;
+  font-family: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
+}
+
+/* Dot grid background */
+.dot-grid {
+  background-image: radial-gradient(circle, var(--color-border) 1px, transparent 1px);
+  background-size: 24px 24px;
 }
 
 /* Card entrance animation */
 @keyframes card-in {
   from {
     opacity: 0;
-    transform: translateY(12px) scale(0.98);
+    transform: translateY(8px);
   }
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translateY(0);
   }
 }
 
 .card-enter {
-  animation: card-in 0.3s ease-out forwards;
+  animation: card-in 0.25s ease-out forwards;
 }
 
 /* Pulse for critical items */
 @keyframes pulse-glow {
   0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
-  50% { box-shadow: 0 0 20px 2px rgba(239, 68, 68, 0.15); }
+  50% { box-shadow: 0 0 16px 2px rgba(239, 68, 68, 0.12); }
 }
 
 .pulse-critical {
@@ -51,12 +69,17 @@ body {
 
 /* Button press */
 .btn-press:active {
-  transform: scale(0.96);
+  transform: scale(0.97);
+}
+
+/* Mono text */
+.font-mono {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
 }
 
 /* Smooth scrollbar */
 ::-webkit-scrollbar {
-  width: 6px;
+  width: 5px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
@@ -67,4 +90,19 @@ body {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-border-hover);
+}
+
+/* Sidebar active indicator */
+.sidebar-active {
+  position: relative;
+}
+.sidebar-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 25%;
+  bottom: 25%;
+  width: 3px;
+  background: var(--color-accent);
+  border-radius: 0 2px 2px 0;
 }
