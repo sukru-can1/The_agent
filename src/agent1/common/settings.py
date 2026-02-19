@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     claude_model_default: str = "claude-sonnet-4-5-20250929"
     claude_model_haiku: str = "claude-haiku-4-5-20251001"
-    claude_model_opus: str = "claude-opus-4-0-20250514"
+    claude_model_opus: str = "claude-opus-4-20250514"
 
     # --- Voyage AI ---
     voyage_api_key: str = ""

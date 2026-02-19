@@ -75,16 +75,19 @@ class GChatPostMessageTool(BaseTool):
             body["cardsV2"] = cards if isinstance(cards, list) else [cards]
 
         try:
+            create_kwargs: dict[str, Any] = {
+                "parent": space_name,
+                "body": body,
+                "requestId": request_id,
+            }
+            if thread_key:
+                create_kwargs["messageReplyOption"] = "REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD"
+
             result = await asyncio.to_thread(
                 lambda: (
                     service.spaces()
                     .messages()
-                    .create(
-                        parent=space_name,
-                        body=body,
-                        requestId=request_id,
-                        messageReplyOption="REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD",
-                    )
+                    .create(**create_kwargs)
                     .execute()
                 ),
             )
@@ -141,16 +144,19 @@ class GChatReplyAsAgentTool(BaseTool):
             body["thread"] = {"threadKey": thread_key}
 
         try:
+            create_kwargs: dict[str, Any] = {
+                "parent": space_name,
+                "body": body,
+                "requestId": request_id,
+            }
+            if thread_key:
+                create_kwargs["messageReplyOption"] = "REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD"
+
             result = await asyncio.to_thread(
                 lambda: (
                     service.spaces()
                     .messages()
-                    .create(
-                        parent=space_name,
-                        body=body,
-                        requestId=request_id,
-                        messageReplyOption="REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD",
-                    )
+                    .create(**create_kwargs)
                     .execute()
                 ),
             )
