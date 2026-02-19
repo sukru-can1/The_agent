@@ -3,7 +3,5 @@ builder = "dockerfile"
 dockerfilePath = "Dockerfile.webhook"
 
 [deploy]
-healthcheckPath = "/health"
-healthcheckTimeout = 30
 restartPolicyType = "always"
 numReplicas = 1

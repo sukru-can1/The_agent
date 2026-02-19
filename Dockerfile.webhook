@@ -20,6 +20,7 @@ ENV PYTHONPATH=/app/src
 
 EXPOSE 8080
 
-# Run migrations then start in webhook or worker mode based on SERVICE_MODE env var
-# SERVICE_MODE=worker → consumer + scheduler; otherwise → uvicorn webhook server
-CMD ["sh", "-c", "uv run python migrations/migrate.py || echo 'Migration warning'; if [ \"$SERVICE_MODE\" = 'worker' ]; then exec uv run python -m agent1.worker.main; else exec uv run python -m uvicorn agent1.webhook.app:create_app --factory --host 0.0.0.0 --port ${PORT:-8080}; fi"]
+COPY entrypoint.sh ./
+RUN chmod +x entrypoint.sh
+
+CMD ["./entrypoint.sh"]
