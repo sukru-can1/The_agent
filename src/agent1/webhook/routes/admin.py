@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import Optional
+from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -39,12 +40,21 @@ async def admin_status():
             "SELECT COUNT(*) FROM dead_letter_events WHERE resolved_at IS NULL"
         )
 
+        pending_proposals = 0
+        try:
+            pending_proposals = await conn.fetchval(
+                "SELECT COUNT(*) FROM proposals WHERE status = 'pending' AND (expires_at IS NULL OR expires_at > NOW())"
+            ) or 0
+        except Exception:
+            pass  # Table may not exist yet
+
     is_paused = await redis.exists("agent1:queue:paused") == 1
 
     return {
         "queue_depth": queue_depth,
         "pending_drafts": pending_drafts,
         "dlq_count": dlq_count,
+        "pending_proposals": pending_proposals,
         "is_paused": is_paused,
         "last_action": dict(last_action) if last_action else None,
     }
@@ -679,4 +689,99 @@ async def list_integrations():
         {"id": "langfuse", "name": "LangFuse", "active": bool(settings.langfuse_public_key)},
         {"id": "mcp", "name": "MCP Tools", "active": settings.dynamic_tools_enabled},
     ]
+
+
+# --- Proposals ---
+
+
+@router.get("/proposals")
+async def list_proposals(status: str = "pending", type: Optional[str] = None, limit: int = 20):
+    """List proposals by status, optionally filtered by type."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        if type:
+            rows = await conn.fetch(
+                """
+                SELECT id, type, title, description, evidence, code, config,
+                       confidence, status, created_at, expires_at, reviewed_at, reviewed_by
+                FROM proposals
+                WHERE status = $1 AND type = $2
+                ORDER BY confidence DESC, created_at DESC
+                LIMIT $3
+                """,
+                status, type, limit,
+            )
+        else:
+            rows = await conn.fetch(
+                """
+                SELECT id, type, title, description, evidence, code, config,
+                       confidence, status, created_at, expires_at, reviewed_at, reviewed_by
+                FROM proposals
+                WHERE status = $1
+                ORDER BY confidence DESC, created_at DESC
+                LIMIT $2
+                """,
+                status, limit,
+            )
+    return [dict(r) for r in rows]
+
+
+@router.get("/proposals/stats")
+async def proposal_stats():
+    """Get proposal counts by type and status."""
+    from agent1.intelligence.proposals import get_proposal_stats
+    return await get_proposal_stats()
+
+
+@router.get("/proposals/{proposal_id}")
+async def get_proposal_detail(proposal_id: str):
+    """Get a single proposal by UUID."""
+    from agent1.intelligence.proposals import get_proposal
+    proposal = await get_proposal(UUID(proposal_id))
+    if not proposal:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    return proposal
+
+
+class ProposalApproveBody(BaseModel):
+    notes: Optional[str] = None
+    edited_description: Optional[str] = None
+
+
+@router.post("/proposals/{proposal_id}/approve")
+async def approve_proposal_endpoint(proposal_id: str, body: ProposalApproveBody = ProposalApproveBody()):
+    """Approve a pending proposal."""
+    from agent1.intelligence.proposals import approve_proposal
+    success = await approve_proposal(
+        UUID(proposal_id),
+        notes=body.notes,
+        edited_description=body.edited_description,
+    )
+    if not success:
+        raise HTTPException(status_code=404, detail="Proposal not found or not pending")
+    return {"status": "approved", "proposal_id": proposal_id}
+
+
+class ProposalRejectBody(BaseModel):
+    reason: Optional[str] = None
+
+
+@router.post("/proposals/{proposal_id}/reject")
+async def reject_proposal_endpoint(proposal_id: str, body: ProposalRejectBody = ProposalRejectBody()):
+    """Reject a pending proposal."""
+    from agent1.intelligence.proposals import reject_proposal
+    success = await reject_proposal(UUID(proposal_id), reason=body.reason)
+    if not success:
+        raise HTTPException(status_code=404, detail="Proposal not found or not pending")
+    return {"status": "rejected", "proposal_id": proposal_id}
+
+
+# --- Solutions ---
+
+
+@router.get("/solutions")
+async def list_solutions(type: Optional[str] = None):
+    """List active solutions (tools, automations, scripts)."""
+    from agent1.intelligence.solutions.factory import get_active_solutions
+    return await get_active_solutions(type)
 
