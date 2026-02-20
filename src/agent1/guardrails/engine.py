@@ -1,4 +1,4 @@
-"""Programmatic guardrails engine — checks before any action execution."""
+"""Programmatic guardrails engine -- checks before any action execution."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ async def check_guardrails(event: Event, classification: ClassificationResult) -
     """Run all guardrail checks before allowing an action.
 
     Returns True if the event is safe to process, False if blocked.
+    When blocked, creates a proposal and notifies the operator.
     """
     # Check business rules
     rule_result = await check_business_rules(event, classification)
@@ -24,6 +25,7 @@ async def check_guardrails(event: Event, classification: ClassificationResult) -
             rule=rule_result["rule"],
             reason=rule_result["reason"],
         )
+        await _notify_block(event, rule_result)
         return False
 
     # Check rate limits
@@ -37,3 +39,47 @@ async def check_guardrails(event: Event, classification: ClassificationResult) -
         return False
 
     return True
+
+
+async def _notify_block(event: Event, rule_result: dict) -> None:
+    """Create a guardrail_override proposal and notify via Chat."""
+    from agent1.worker.loop import _extract_event_summary
+
+    summary = _extract_event_summary(event)
+    rule_name = rule_result.get("rule", "unknown")
+    reason = rule_result.get("reason", "")
+
+    # Create override proposal
+    try:
+        from agent1.intelligence.proposals import create_proposal, ProposalType
+        await create_proposal(
+            type=ProposalType.GUARDRAIL_OVERRIDE,
+            title=f"Blocked: {event.source.value} — {rule_name}",
+            description=(
+                f"Event {event.id} was blocked by guardrail rule '{rule_name}'.\n"
+                f"Reason: {reason}\n\n"
+                f"Event: {summary}"
+            ),
+            config={"event_id": str(event.id), "rule_name": rule_name},
+            confidence=0.0,
+            related_event_ids=[event.id],
+        )
+    except Exception:
+        log.exception("guardrail_proposal_creation_failed")
+
+    # Notify via Chat (best effort)
+    try:
+        from agent1.tools.google_chat import GChatPostMessageTool
+        chat = GChatPostMessageTool()
+        await chat.execute(
+            space="alerts",
+            message=(
+                f"**Event blocked by guardrails**\n"
+                f"**Rule:** {rule_name}\n"
+                f"**Reason:** {reason}\n"
+                f"**Event:** {summary}\n\n"
+                f"Reply `override {str(event.id)[:8]}` or approve in Dashboard."
+            ),
+        )
+    except Exception:
+        log.warning("guardrail_chat_notification_failed")
