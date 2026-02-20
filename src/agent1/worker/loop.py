@@ -117,6 +117,22 @@ async def process_event(event: Event) -> None:
         await _handle_summary_event(event, start)
         return
 
+    # Step 1.5: Context enrichment (NEW)
+    enriched_context = None
+    try:
+        from agent1.intelligence.context_engine import enrich
+        enriched_context = await enrich(event, classification)
+        if enriched_context and enriched_context.token_estimate > 0:
+            log.info(
+                "context_enriched",
+                event_id=str(event.id),
+                tokens=enriched_context.token_estimate,
+                incidents=len(enriched_context.similar_incidents),
+                knowledge=len(enriched_context.relevant_knowledge),
+            )
+    except Exception:
+        log.warning("context_enrichment_failed", event_id=str(event.id))
+
     # Step 2: Plan (skip for simple events)
     plan = None
     if classification.complexity != "simple":
@@ -144,7 +160,7 @@ async def process_event(event: Event) -> None:
     # Step 4: Reason and execute tools
     from agent1.reasoning.engine import reason_and_act
 
-    result = await reason_and_act(event, classification, plan)
+    result = await reason_and_act(event, classification, plan, enriched_context)
 
     # Step 4b: Safety net — if Chat event and Gemini didn't post a reply via tools,
     # post the reasoning result as a Chat message (skip for dashboard-sourced events)
@@ -222,6 +238,26 @@ async def process_event(event: Event) -> None:
             "UPDATE events SET status = 'completed', processed_at = NOW() WHERE id = $1",
             event.id,
         )
+
+    # Step 5.5: Post-action intelligence (NEW)
+    try:
+        from agent1.intelligence.analytics_engine import track_event, check_correlations
+        await track_event(event.source.value, event.event_type, classification.category)
+
+        correlations = await check_correlations(event.source.value, event.event_type)
+        if correlations:
+            try:
+                from agent1.tools.google_chat import GChatPostMessageTool
+                chat = GChatPostMessageTool()
+                for c in correlations:
+                    await chat.execute(
+                        space="alerts",
+                        message=f"**Cross-system pattern:** {c['summary']}",
+                    )
+            except Exception:
+                log.warning("correlation_alert_failed")
+    except Exception:
+        log.warning("post_action_intel_failed", event_id=str(event.id))
 
     log.info(
         "event_processed",

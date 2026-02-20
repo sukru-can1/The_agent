@@ -114,12 +114,30 @@ async def _daily_summary() -> None:
     log.info("daily_summary_scheduled")
 
 
+async def _run_baseline_update() -> None:
+    """Update adaptive baselines from historical data. Run weekly."""
+    from agent1.intelligence.analytics_engine import update_baselines
+    await update_baselines()
+
+
+async def _run_load_baselines() -> None:
+    """Load baselines from DB on startup."""
+    try:
+        from agent1.intelligence.analytics_engine import load_baselines
+        await load_baselines()
+    except Exception:
+        pass  # Table may not exist yet
+
+
 async def run_scheduler() -> None:
     """Main scheduler loop — runs pollers and cron tasks."""
     settings = get_settings()
     interval = settings.heartbeat_interval_seconds
 
     log.info("scheduler_started", interval=interval)
+
+    # Load baselines on startup
+    await _run_load_baselines()
 
     poll_count = 0
     while True:
@@ -152,6 +170,13 @@ async def run_scheduler() -> None:
                 await _morning_brief()
             elif now.hour == 18 and now.minute < (interval // 60 + 1):
                 await _daily_summary()
+
+            # Weekly baseline update (Sunday midnight)
+            if now.weekday() == 6 and now.hour == 0 and now.minute < (interval // 60 + 1):
+                try:
+                    await _run_baseline_update()
+                except Exception:
+                    log.exception("baseline_update_error")
 
         except Exception:
             log.exception("scheduler_error")

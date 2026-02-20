@@ -28,7 +28,7 @@ async def _detect_ticket_spikes() -> None:
             WHERE created_at >= NOW() - INTERVAL '1 hour'
               AND status != 'dead_letter'
             GROUP BY source, event_type
-            HAVING COUNT(*) >= 3
+            HAVING COUNT(*) >= 2
             """
         )
 
@@ -41,6 +41,17 @@ async def _detect_ticket_spikes() -> None:
         already_alerted = await redis.exists(pattern_key)
         if already_alerted:
             continue
+
+        # Check against adaptive baseline
+        try:
+            from agent1.intelligence.analytics_engine import get_baseline, is_anomaly
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc)
+            baseline = get_baseline(row["source"], row["event_type"], now.weekday(), now.hour)
+            if not is_anomaly(row["source"], row["event_type"], row["count"], baseline):
+                continue
+        except Exception:
+            pass  # Fall through to legacy threshold (HAVING COUNT >= 3)
 
         # Set a 2-hour cooldown to avoid repeat alerts
         await redis.set(pattern_key, "1", ex=7200)
