@@ -9,7 +9,6 @@ from agent1.common.db import get_pool
 from agent1.common.logging import get_logger
 from agent1.common.models import ActionLog, ClassificationResult, Event, EventSource
 from agent1.common.observability import trace_operation
-from agent1.common.redis_client import get_redis
 from agent1.common.settings import get_settings
 
 log = get_logger(__name__)
@@ -45,12 +44,6 @@ def _extract_event_summary(event: Event) -> str:
     return event.event_type
 
 
-async def _is_paused() -> bool:
-    """Check if the queue is paused."""
-    redis = await get_redis()
-    return await redis.exists("agent1:queue:paused") == 1
-
-
 async def _log_action(action: ActionLog, event_id: str | None = None) -> None:
     """Store an action in the audit log."""
     pool = await get_pool()
@@ -76,10 +69,6 @@ async def _log_action(action: ActionLog, event_id: str | None = None) -> None:
 @trace_operation("process_event")
 async def process_event(event: Event) -> None:
     """Process a single event through the full pipeline."""
-    if await _is_paused():
-        log.info("queue_paused_skipping", event_id=str(event.id))
-        # Re-enqueue by raising so consumer will nack
-        raise RuntimeError("Queue is paused")
 
     start = time.monotonic()
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 
 from agent1.common.logging import get_logger
 from agent1.common.models import Event
@@ -104,18 +103,55 @@ async def nack_event(event: Event, error: str) -> None:
     )
 
 
+MAX_CONCURRENT = 5  # process up to 5 events in parallel
+
+
+async def _process_one(process_fn, event: Event) -> None:
+    """Process a single event with ack/nack handling."""
+    try:
+        await process_fn(event)
+        await ack_event(event)
+    except Exception as exc:
+        await nack_event(event, str(exc))
+
+
+async def _is_paused() -> bool:
+    """Check if the queue is paused."""
+    redis = await get_redis()
+    return await redis.exists("agent1:queue:paused") == 1
+
+
 async def run_consumer(process_fn) -> None:
-    """Main consumer loop: dequeue and process events."""
-    log.info("consumer_started")
+    """Main consumer loop: dequeue and process events concurrently."""
+    log.info("consumer_started", max_concurrent=MAX_CONCURRENT)
+
+    active: set[asyncio.Task] = set()
 
     while True:
-        event = await consume_one()
-        if event is None:
-            await asyncio.sleep(1)
+        # Clean up finished tasks
+        done = {t for t in active if t.done()}
+        active -= done
+
+        # When paused, don't consume new events — let existing tasks finish
+        if await _is_paused():
+            if active:
+                _done, _pending = await asyncio.wait(active, return_when=asyncio.FIRST_COMPLETED)
+                active -= _done
+            else:
+                await asyncio.sleep(2)
             continue
 
-        try:
-            await process_fn(event)
-            await ack_event(event)
-        except Exception as exc:
-            await nack_event(event, str(exc))
+        # Fill up to MAX_CONCURRENT slots
+        while len(active) < MAX_CONCURRENT:
+            event = await consume_one()
+            if event is None:
+                break
+            task = asyncio.create_task(_process_one(process_fn, event))
+            active.add(task)
+
+        if not active:
+            await asyncio.sleep(1)
+        else:
+            # Wait for at least one task to finish before looping
+            _done, _pending = await asyncio.wait(active, return_when=asyncio.FIRST_COMPLETED)
+            active -= _done
