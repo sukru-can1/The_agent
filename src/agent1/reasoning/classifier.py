@@ -94,6 +94,16 @@ def _fix_truncated_json(text: str) -> str:
     # Remove trailing comma before closing braces/brackets: ,} or ,]
     text = re.sub(r",\s*([}\]])", r"\1", text)
 
+    # Remove dangling key-value fragments at end of object:
+    #   , "key":   (key with colon but no value, after comma)
+    #   , "key"    (key without colon, after comma)
+    text = re.sub(r',\s*"[^"]*"\s*:\s*$', "", text)
+    text = re.sub(r',\s*"[^"]*"\s*$', "", text)
+    #   { "key":   (key with colon but no value, first/only entry)
+    #   { "key"    (key without colon, first/only entry)
+    text = re.sub(r'({\s*)"[^"]*"\s*:\s*$', r"\1", text)
+    text = re.sub(r'({\s*)"[^"]*"\s*$', r"\1", text)
+
     # Balance braces and brackets
     open_braces = text.count("{") - text.count("}")
     open_brackets = text.count("[") - text.count("]")
@@ -147,7 +157,16 @@ async def classify_event(event: Event) -> ClassificationResult:
             ),
         )
 
-        data = _extract_json(response.text)
+        response_text = response.text or ""
+        if not response_text.strip():
+            log.warning(
+                "empty_gemini_response",
+                event_id=str(event.id),
+                model=settings.gemini_model_fast,
+            )
+            raise ValueError("Gemini returned empty response")
+
+        data = _extract_json(response_text)
 
         return ClassificationResult(
             category=data.get("category", event.event_type),

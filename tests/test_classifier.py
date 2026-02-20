@@ -65,6 +65,42 @@ class TestExtractJson:
         result = _extract_json(text)
         assert result["category"] == "spam"
 
+    def test_severely_truncated_bare_quote(self):
+        """Gemini returns only opening brace + partial key."""
+        text = '{\n  "'
+        result = _extract_json(text)
+        assert result == {}
+
+    def test_severely_truncated_dangling_colon(self):
+        """Gemini returns key + colon but no value."""
+        text = '{\n  "category":'
+        result = _extract_json(text)
+        assert result == {}
+
+    def test_truncated_second_key_dangling_colon(self):
+        """First pair complete, second key has dangling colon."""
+        text = '{"category": "spam", "urgency":'
+        result = _extract_json(text)
+        assert result == {"category": "spam"}
+
+    def test_truncated_second_key_no_colon(self):
+        """First pair complete, second key has no colon."""
+        text = '{"category": "spam", "ur'
+        result = _extract_json(text)
+        assert result == {"category": "spam"}
+
+    def test_multiline_truncated_with_trailing_comma(self):
+        """Multi-line JSON truncated with trailing comma (production case)."""
+        text = (
+            '{\n  "category": "payment_problem",\n'
+            '  "urgency": 1,\n'
+            '  "complexity": "simple",\n'
+            '  "involves_vip": false,'
+        )
+        result = _extract_json(text)
+        assert result["category"] == "payment_problem"
+        assert result["urgency"] == 1
+
     def test_raises_on_garbage(self):
         with pytest.raises(ValueError, match="No valid JSON"):
             _extract_json("This is not JSON at all")
@@ -95,6 +131,36 @@ class TestFixTruncatedJson:
     def test_removes_trailing_comma(self):
         result = _fix_truncated_json('{"a": 1, "b": 2,')
         assert not result.rstrip("}]").endswith(",")
+
+    def test_removes_dangling_colon_after_comma(self):
+        """Handles , "key": at end."""
+        result = _fix_truncated_json('{"a": 1, "b":')
+        parsed = json.loads(result)
+        assert parsed == {"a": 1}
+
+    def test_removes_dangling_key_after_comma(self):
+        """Handles , "key" at end (no colon)."""
+        result = _fix_truncated_json('{"a": 1, "b"')
+        parsed = json.loads(result)
+        assert parsed == {"a": 1}
+
+    def test_removes_dangling_colon_first_entry(self):
+        """Handles { "key": as only content."""
+        result = _fix_truncated_json('{"category":')
+        parsed = json.loads(result)
+        assert parsed == {}
+
+    def test_removes_dangling_key_first_entry(self):
+        """Handles { "key" as only content."""
+        result = _fix_truncated_json('{ "cat"')
+        parsed = json.loads(result)
+        assert parsed == {}
+
+    def test_bare_quote_after_brace(self):
+        """Handles { " (just a bare quote start, closed by unterminated string fix)."""
+        result = _fix_truncated_json('{  "')
+        parsed = json.loads(result)
+        assert parsed == {}
 
 
 # ===========================================================================
