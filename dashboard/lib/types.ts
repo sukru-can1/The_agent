@@ -2,6 +2,7 @@ export interface AgentStatus {
   queue_depth: number;
   pending_drafts: number;
   dlq_count: number;
+  pending_proposals: number;
   is_paused: boolean;
   last_action: {
     timestamp: string;
@@ -158,6 +159,33 @@ export function extractActionSummary(action: AgentAction): ActionSummary {
 
   return { eventSummary, toolsUsed, agentResponse, externalLink };
 }
+
+export interface Proposal {
+  id: string;
+  type: string;
+  title: string;
+  description: string;
+  evidence: string | null;
+  code: string | null;
+  config: Record<string, unknown> | null;
+  confidence: number;
+  status: string;
+  created_at: string;
+  expires_at: string | null;
+  reviewed_at: string | null;
+  reviewed_by: string | null;
+}
+
+export const PROPOSAL_TYPE_CONFIG: Record<string, { label: string; color: string }> = {
+  learned_rule: { label: "Rule", color: "text-cyan-400" },
+  strong_rule: { label: "Strong Rule", color: "text-cyan-300" },
+  tool_creation: { label: "Tool", color: "text-amber-400" },
+  automation: { label: "Automation", color: "text-purple-400" },
+  mcp_server: { label: "MCP", color: "text-emerald-400" },
+  guardrail_override: { label: "Override", color: "text-red-400" },
+  threshold_adjustment: { label: "Threshold", color: "text-indigo-400" },
+  playbook_suggestion: { label: "Playbook", color: "text-slate-400" },
+};
 
 export function timeAgo(ts: string): string {
   const diff = Date.now() - new Date(ts).getTime();

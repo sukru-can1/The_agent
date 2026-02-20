@@ -8,6 +8,7 @@ import {
   Activity,
   Brain,
   BarChart3,
+  Lightbulb,
   Settings,
   Pause,
   Play,
@@ -22,6 +23,7 @@ const nav = [
   { href: "/activity", icon: Activity, label: "Activity" },
   { href: "/knowledge", icon: Brain, label: "Knowledge" },
   { href: "/analytics", icon: BarChart3, label: "Analytics" },
+  { href: "/proposals", icon: Lightbulb, label: "Proposals" },
   { href: "/settings", icon: Settings, label: "Settings" },
 ];
 
