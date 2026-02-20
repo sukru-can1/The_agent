@@ -18,6 +18,9 @@ export interface Draft {
   to_address: string;
   subject: string;
   draft_body: string;
+  original_body?: string | null;
+  edited_body?: string | null;
+  context_used?: Record<string, unknown> | null;
   status: string;
   classification: string;
   created_at: string;
@@ -123,6 +126,8 @@ export interface ActionSummary {
   toolsUsed: string[];
   agentResponse: string;
   externalLink: string | null;
+  triggerMessage: string | null;
+  classification: Record<string, unknown> | null;
 }
 
 export function extractActionSummary(action: AgentAction): ActionSummary {
@@ -157,7 +162,36 @@ export function extractActionSummary(action: AgentAction): ActionSummary {
     }
   }
 
-  return { eventSummary, toolsUsed, agentResponse, externalLink };
+  // Trigger message — what the user/customer said
+  let triggerMessage: string | null = null;
+  if (eventPayload) {
+    // Chat messages
+    const text = eventPayload.text as string;
+    if (text) triggerMessage = text;
+    // Emails
+    const subject = eventPayload.subject as string;
+    const from = (eventPayload.from_address ?? eventPayload.sender) as string;
+    if (subject && !triggerMessage) {
+      triggerMessage = `${from ? from + ": " : ""}${subject}`;
+    }
+    // Freshdesk
+    const ticketSubject = eventPayload.subject as string;
+    const ticketId = eventPayload.ticket_id as string;
+    if (ticketId && !triggerMessage) {
+      triggerMessage = `Ticket #${ticketId}: ${ticketSubject || ""}`;
+    }
+  }
+  // Auto-response details
+  if (!triggerMessage && d.question) {
+    triggerMessage = d.question as string;
+  }
+
+  // Classification data
+  const classificationData = Object.keys(classification).length > 0
+    ? classification as Record<string, unknown>
+    : null;
+
+  return { eventSummary, toolsUsed, agentResponse, externalLink, triggerMessage, classification: classificationData };
 }
 
 export interface Proposal {

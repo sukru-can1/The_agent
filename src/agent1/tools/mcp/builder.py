@@ -106,7 +106,7 @@ class DynamicTool(BaseTool):
 
             return scope.get("result", "Tool executed (no result returned)")
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return {"error": f"Dynamic tool '{self._name}' timed out after {DYNAMIC_TOOL_TIMEOUT}s"}
         except Exception as exc:
             log.error("dynamic_tool_error", tool=self._name, error=str(exc))

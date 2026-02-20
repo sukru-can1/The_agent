@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import Sidebar from "@/components/shell/Sidebar";
 import Topbar from "@/components/shell/Topbar";
+import ChatPanel from "@/components/ChatPanel";
 import type { AgentStatus, Category } from "@/lib/types";
 
 const pageTitles: Record<string, string> = {
@@ -72,6 +73,7 @@ export default function DashboardLayout({
           {children}
         </main>
       </div>
+      <ChatPanel />
     </div>
   );
 }

@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import time
 
-from agent1.common.models import Event, Priority
-
+from agent1.common.models import Priority
 
 # Redis key constants
 QUEUE_KEY = "agent1:queue:events"

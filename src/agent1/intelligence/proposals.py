@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from enum import StrEnum
-from typing import Any
 from uuid import UUID
 
 from agent1.common.db import get_pool
@@ -218,8 +217,8 @@ async def execute_approval(proposal: dict) -> None:
         if isinstance(config, str):
             config = json.loads(config)
         if config and config.get("event_id"):
-            from agent1.queue.publisher import publish_event
             from agent1.common.models import Event, EventSource, Priority
+            from agent1.queue.publisher import publish_event
             event = Event(
                 source=EventSource.ADMIN,
                 event_type="guardrail_override",

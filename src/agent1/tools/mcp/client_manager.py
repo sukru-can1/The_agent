@@ -38,8 +38,8 @@ class MCPClientManager:
     async def _connect_server(self, config: MCPServerConfig) -> None:
         """Connect to a single MCP server based on its transport type."""
         from mcp import ClientSession
-        from mcp.client.stdio import stdio_client, StdioServerParameters
         from mcp.client.sse import sse_client
+        from mcp.client.stdio import StdioServerParameters, stdio_client
 
         if config.transport == "stdio":
             if not config.command:

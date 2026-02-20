@@ -223,24 +223,21 @@ class GmailDraftReplyTool(BaseTool):
         context_notes = kwargs.get("context_notes", "")
 
         try:
-            # Fetch the original email to get From/Subject/Thread info
+            # Fetch the original email (full format to capture body for revision context)
             msg = await asyncio.to_thread(
                 service.users()
                 .messages()
-                .get(
-                    userId="me",
-                    id=message_id,
-                    format="metadata",
-                    metadataHeaders=["From", "To", "Subject"],
-                )
+                .get(userId="me", id=message_id, format="full")
                 .execute,
             )
 
-            headers = msg.get("payload", {}).get("headers", [])
+            payload = msg.get("payload", {})
+            headers = payload.get("headers", [])
             from_address = _header_value(headers, "From")
             to_address = _header_value(headers, "To")
             subject = _header_value(headers, "Subject")
             thread_id = msg.get("threadId", "")
+            original_body = _decode_body(payload)
 
             # Store draft in database (NOT in Gmail — pending approval)
             pool = await get_pool()
@@ -249,8 +246,8 @@ class GmailDraftReplyTool(BaseTool):
                     """
                     INSERT INTO email_drafts
                         (gmail_message_id, gmail_thread_id, from_address, to_address,
-                         subject, draft_body, classification, context_used, status)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')
+                         subject, original_body, draft_body, classification, context_used, status)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')
                     RETURNING id
                     """,
                     message_id,
@@ -258,6 +255,7 @@ class GmailDraftReplyTool(BaseTool):
                     from_address,
                     to_address,
                     subject,
+                    original_body or None,
                     draft_body,
                     classification,
                     json.dumps({"context_notes": context_notes}),

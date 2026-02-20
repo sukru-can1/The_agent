@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from agent1.common.logging import get_logger
 from agent1.common.models import Event, EventSource, Priority
@@ -94,8 +94,8 @@ async def _morning_brief() -> None:
         source=EventSource.SCHEDULER,
         event_type="morning_brief",
         priority=Priority.LOW,
-        payload={"date": datetime.now(timezone.utc).strftime("%Y-%m-%d")},
-        idempotency_key=f"morning_brief:{datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
+        payload={"date": datetime.now(UTC).strftime("%Y-%m-%d")},
+        idempotency_key=f"morning_brief:{datetime.now(UTC).strftime('%Y-%m-%d')}",
     )
     await publish_event(event)
     log.info("morning_brief_scheduled")
@@ -107,8 +107,8 @@ async def _daily_summary() -> None:
         source=EventSource.SCHEDULER,
         event_type="daily_summary",
         priority=Priority.LOW,
-        payload={"date": datetime.now(timezone.utc).strftime("%Y-%m-%d")},
-        idempotency_key=f"daily_summary:{datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
+        payload={"date": datetime.now(UTC).strftime("%Y-%m-%d")},
+        idempotency_key=f"daily_summary:{datetime.now(UTC).strftime('%Y-%m-%d')}",
     )
     await publish_event(event)
     log.info("daily_summary_scheduled")
@@ -143,12 +143,12 @@ async def run_scheduler() -> None:
     while True:
         try:
             poll_count += 1
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
 
             log.info("scheduler_tick", poll=poll_count, time=now.isoformat())
 
             # Run pollers concurrently
-            await asyncio.gather(
+            results = await asyncio.gather(
                 _run_gmail_poller(),
                 _run_freshdesk_poller(),
                 _run_feedbacks_poller(),
@@ -157,6 +157,14 @@ async def run_scheduler() -> None:
                 _run_pattern_detection(),
                 return_exceptions=True,
             )
+
+            # Log any swallowed poller exceptions
+            poller_names = [
+                "gmail", "freshdesk", "feedbacks", "starinfinity", "gchat", "pattern_detection",
+            ]
+            for name, result in zip(poller_names, results):
+                if isinstance(result, Exception):
+                    log.error("poller_error", poller=name, error=str(result))
 
             # Run feedback analysis less frequently (every 10th tick)
             if poll_count % 10 == 0:

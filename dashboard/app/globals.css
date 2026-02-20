@@ -106,3 +106,32 @@ body {
   background: var(--color-accent);
   border-radius: 0 2px 2px 0;
 }
+
+/* ---- Chat pill + panel animations ---- */
+@keyframes orb-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes orb-breathe {
+  0%, 100% { opacity: 0.7; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
+
+@keyframes panel-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.chat-pill {
+  cursor: pointer;
+  will-change: transform, box-shadow;
+  transition: transform 0.15s ease-out, box-shadow 0.3s ease-out;
+}
+.chat-pill:hover {
+  box-shadow:
+    0 -6px 32px rgba(129,140,248,0.18),
+    inset 0 1px 0 rgba(255,255,255,0.08) !important;
+}
+.chat-pill:active {
+  transform: perspective(600px) scale(0.97) !important;
+}

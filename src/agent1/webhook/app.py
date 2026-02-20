@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
-import subprocess
-import sys
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI
 
@@ -38,7 +34,7 @@ async def lifespan(app: FastAPI):
         log.warning("redis_connect_failed", error=str(exc))
 
     # Register all tools (native + MCP + dynamic)
-    from agent1.tools.registry import register_all_tools, register_mcp_tools, register_dynamic_tools
+    from agent1.tools.registry import register_all_tools, register_dynamic_tools, register_mcp_tools
 
     register_all_tools()
     await register_mcp_tools()
@@ -68,11 +64,11 @@ def create_app() -> FastAPI:
     )
 
     # Register routes
-    from agent1.webhook.routes.health import router as health_router
-    from agent1.webhook.routes.gchat import router as gchat_router
-    from agent1.webhook.routes.freshdesk import router as freshdesk_router
-    from agent1.webhook.routes.gmail_push import router as gmail_router
     from agent1.webhook.routes.admin import router as admin_router
+    from agent1.webhook.routes.freshdesk import router as freshdesk_router
+    from agent1.webhook.routes.gchat import router as gchat_router
+    from agent1.webhook.routes.gmail_push import router as gmail_router
+    from agent1.webhook.routes.health import router as health_router
     from agent1.webhook.routes.oauth_callback import router as oauth_router
 
     app.include_router(health_router)

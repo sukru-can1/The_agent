@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     # --- OpenRouter ---
     openrouter_api_key: str = ""
     openrouter_model_flash: str = "google/gemini-2.5-flash"
-    openrouter_model_fast: str = "moonshotai/kimi-k2.5"
+    openrouter_model_fast: str = "google/gemini-2.5-flash"
     openrouter_model_default: str = "moonshotai/kimi-k2.5"
     openrouter_model_pro: str = "moonshotai/kimi-k2-thinking"
 
@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     gchat_space_summary: str = ""
     gchat_dm_sukru: str = ""
     gchat_poll_spaces: list[str] = Field(default_factory=list)  # space IDs to poll in user mode
+    gchat_poll_all_dms: bool = False  # auto-discover and poll ALL DM spaces
     gchat_user_email: str = "sukru.can@glamira-group.com"  # to filter out own messages
 
     # --- Freshdesk ---

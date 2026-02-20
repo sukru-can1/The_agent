@@ -153,6 +153,20 @@ async def resolve_dlq(dlq_id: str):
     return {"status": "resolved"}
 
 
+@router.post("/dlq/bulk-resolve")
+async def bulk_resolve_dlq():
+    """Resolve ALL unresolved DLQ entries at once."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "UPDATE dead_letter_events SET resolved_at = NOW(), resolved_by = 'admin_bulk'"
+            " WHERE resolved_at IS NULL"
+        )
+        count = int(result.split()[-1])  # "UPDATE <n>"
+    log.info("dlq_bulk_resolved", count=count)
+    return {"status": "resolved", "count": count}
+
+
 @router.post("/queue/pause")
 async def pause_queue():
     """Pause event processing (sets a Redis flag)."""
@@ -174,8 +188,214 @@ async def resume_queue():
 # --- Draft approval / rejection ---
 
 
+class DraftReviseBody(BaseModel):
+    instruction: str
+
+
+class DraftSendBody(BaseModel):
+    edited_body: str | None = None
+
+
 class DraftApproveBody(BaseModel):
     edited_body: str | None = None
+
+
+@router.get("/drafts/{draft_id}")
+async def get_draft(draft_id: int):
+    """Get full draft details including original_body, edited_body, context_used."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT id, gmail_message_id, gmail_thread_id, from_address, to_address,
+                   subject, original_body, draft_body, edited_body, status,
+                   classification, context_used, created_at, approved_at, sent_at
+            FROM email_drafts
+            WHERE id = $1
+            """,
+            draft_id,
+        )
+    if not row:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    result = dict(row)
+    # Parse context_used JSONB
+    if isinstance(result.get("context_used"), str):
+        try:
+            result["context_used"] = json.loads(result["context_used"])
+        except Exception:
+            pass
+    return result
+
+
+@router.post("/drafts/{draft_id}/revise")
+async def revise_draft_endpoint(draft_id: int, body: DraftReviseBody):
+    """AI-revise a pending draft based on an operator instruction."""
+    from agent1.drafts.refiner import revise_draft
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        draft = await conn.fetchrow(
+            """
+            SELECT id, original_body, draft_body, edited_body, subject,
+                   from_address, status, context_used
+            FROM email_drafts
+            WHERE id = $1
+            """,
+            draft_id,
+        )
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    if draft["status"] not in ("pending", "approved"):
+        raise HTTPException(status_code=400, detail=f"Draft is {draft['status']}, cannot revise")
+
+    # Use latest body version
+    current_body = draft["edited_body"] or draft["draft_body"]
+
+    result = await revise_draft(
+        original_body=draft["original_body"],
+        current_body=current_body,
+        subject=draft["subject"] or "",
+        from_address=draft["from_address"] or "",
+        instruction=body.instruction,
+    )
+
+    # Store revised text and append revision to context_used
+    context = draft["context_used"] or {}
+    if isinstance(context, str):
+        try:
+            context = json.loads(context)
+        except Exception:
+            context = {}
+    revisions = context.get("revisions", [])
+    revisions.append({
+        "instruction": body.instruction,
+        "model_used": result["model_used"],
+        "input_tokens": result["input_tokens"],
+        "output_tokens": result["output_tokens"],
+    })
+    context["revisions"] = revisions
+
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE email_drafts
+            SET edited_body = $2, context_used = $3, status = 'pending'
+            WHERE id = $1
+            """,
+            draft_id,
+            result["revised_body"],
+            json.dumps(context),
+        )
+
+    log.info("draft_revised", draft_id=draft_id, instruction=body.instruction[:80])
+    return {
+        "draft_id": draft_id,
+        "revised_body": result["revised_body"],
+        "model_used": result["model_used"],
+    }
+
+
+@router.post("/drafts/{draft_id}/approve-and-send")
+async def approve_and_send_draft(draft_id: int, body: DraftSendBody = DraftSendBody()):
+    """Atomically approve and send a draft via Gmail API."""
+    import asyncio
+    import base64
+    from email.mime.text import MIMEText
+
+    from agent1.google_auth.auth import get_gmail_service
+
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        draft = await conn.fetchrow(
+            "SELECT * FROM email_drafts WHERE id = $1",
+            draft_id,
+        )
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    if draft["status"] not in ("pending", "approved"):
+        raise HTTPException(status_code=400, detail=f"Draft is {draft['status']}, cannot send")
+
+    # Apply optional final manual tweak
+    final_body = body.edited_body or draft["edited_body"] or draft["draft_body"]
+
+    # Step 1: Approve
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE email_drafts
+            SET status = 'approved', approved_at = NOW(),
+                edited_body = CASE WHEN $2 IS NOT NULL THEN $2 ELSE edited_body END
+            WHERE id = $1
+            """,
+            draft_id,
+            body.edited_body,
+        )
+
+    # Track feedback if body was edited
+    original_draft_body = draft["draft_body"]
+    if final_body != original_draft_body:
+        try:
+            from agent1.feedback.tracker import track_edit
+            await track_edit(
+                draft_id=draft_id,
+                original=original_draft_body,
+                edited=final_body,
+                sender_domain=_extract_domain(draft["from_address"]),
+                category=draft["classification"],
+            )
+        except Exception as exc:
+            log.warning("feedback_tracking_failed", error=str(exc))
+
+    # Step 2: Send via Gmail API
+    service = get_gmail_service()
+    if service is None:
+        raise HTTPException(status_code=500, detail="Gmail not configured")
+
+    try:
+        message = MIMEText(final_body, "plain", "utf-8")
+        message["to"] = draft["from_address"]  # Reply to sender
+        message["from"] = draft["to_address"]  # Our address
+        subject = draft["subject"] or ""
+        if not subject.lower().startswith("re:"):
+            subject = f"Re: {subject}"
+        message["subject"] = subject
+        if draft["gmail_message_id"]:
+            message["In-Reply-To"] = draft["gmail_message_id"]
+            message["References"] = draft["gmail_message_id"]
+
+        raw = base64.urlsafe_b64encode(message.as_bytes()).decode("ascii")
+        send_body_gmail: dict = {"raw": raw}
+        if draft["gmail_thread_id"]:
+            send_body_gmail["threadId"] = draft["gmail_thread_id"]
+
+        sent = await asyncio.to_thread(
+            service.users()
+            .messages()
+            .send(userId="me", body=send_body_gmail)
+            .execute,
+        )
+        sent_msg_id = sent.get("id", "")
+
+        # Step 3: Mark as sent
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE email_drafts SET status = 'sent', sent_at = NOW() WHERE id = $1",
+                draft_id,
+            )
+
+        log.info("draft_approved_and_sent", draft_id=draft_id, sent_message_id=sent_msg_id)
+        return {"status": "sent", "draft_id": draft_id, "message_id": sent_msg_id}
+
+    except Exception as exc:
+        # Roll back to approved (not sent) so user can retry
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE email_drafts SET status = 'approved' WHERE id = $1",
+                draft_id,
+            )
+        log.error("draft_send_failed", draft_id=draft_id, error=str(exc))
+        raise HTTPException(status_code=500, detail=f"Email send failed: {exc}")
 
 
 @router.post("/drafts/{draft_id}/approve")
@@ -518,7 +738,7 @@ async def inject_event(body: InjectEventBody):
         event = Event(
             source=EventSource.DASHBOARD,
             event_type=body.event_type,
-            priority=Priority.HIGH,
+            priority=Priority.CRITICAL,
             payload={
                 "text": body.text,
                 "sender": "Dashboard",
@@ -607,6 +827,117 @@ async def get_action(action_id: int):
                    e.source AS event_source, e.event_type AS event_event_type,
                    e.priority AS event_priority, e.payload AS event_payload,
                    e.status AS event_status, e.created_at AS event_created_at
+            FROM actions_log a
+            LEFT JOIN events e ON e.id::text = a.event_id
+            WHERE a.id = $1
+            """,
+            action_id,
+        )
+    if not row:
+        raise HTTPException(status_code=404, detail="Action not found")
+    return dict(row)
+
+
+class ActionFeedbackBody(BaseModel):
+    comment: str
+    action: str = "note"  # "note", "redo", "revert"
+
+
+@router.post("/actions/{action_id}/feedback")
+async def action_feedback(action_id: int, body: ActionFeedbackBody):
+    """Store operator feedback on an action. Can also trigger redo/revert."""
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        action_row = await conn.fetchrow(
+            """SELECT id, system, action_type, details, event_id
+               FROM actions_log WHERE id = $1""",
+            action_id,
+        )
+    if not action_row:
+        raise HTTPException(status_code=404, detail="Action not found")
+
+    details = action_row["details"] or {}
+    if isinstance(details, str):
+        try:
+            details = json.loads(details)
+        except Exception:
+            details = {}
+
+    context = (
+        f"Re: action #{action_id} ({action_row['system']}"
+        f" / {action_row['action_type']})"
+    )
+    event_summary = details.get("event_summary", "")
+    if event_summary:
+        context += f" — {event_summary}"
+
+    # Always store as knowledge
+    knowledge_content = f"{context}: {body.comment}"
+    async with pool.acquire() as conn:
+        await conn.fetchrow(
+            """INSERT INTO knowledge (category, content, source, confidence)
+               VALUES ('operator_feedback', $1, 'dashboard', 1.0)
+               RETURNING id""",
+            knowledge_content,
+        )
+
+    result: dict = {
+        "status": "noted",
+        "action_id": action_id,
+    }
+
+    # If redo/revert, create a new event for the worker
+    if body.action in ("redo", "revert") and action_row["event_id"]:
+        from agent1.common.models import Event, EventSource, Priority
+        from agent1.queue.publisher import publish_event
+
+        verb = "redo" if body.action == "redo" else "revert"
+        event = Event(
+            source=EventSource.DASHBOARD,
+            event_type=f"operator_{verb}",
+            priority=Priority.HIGH,
+            payload={
+                "text": (
+                    f"Operator wants to {verb} action #{action_id}: "
+                    f"{body.comment}"
+                ),
+                "original_action_id": action_id,
+                "original_event_id": action_row["event_id"],
+                "original_details": details,
+                "sender": "Dashboard Operator",
+                "sender_email": get_settings().gmail_user_email,
+            },
+        )
+        await publish_event(event)
+        result["status"] = f"{verb}_queued"
+        result["event_id"] = str(event.id)
+
+    log.info(
+        "action_feedback",
+        action_id=action_id,
+        action=body.action,
+        comment=body.comment[:100],
+    )
+    return result
+
+
+@router.get("/actions/{action_id}/with-event")
+async def get_action_with_event(action_id: int):
+    """Get action with full event payload for the activity detail view."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT a.id, a.timestamp, a.system, a.action_type,
+                   a.outcome, a.model_used, a.input_tokens,
+                   a.output_tokens, a.latency_ms, a.details,
+                   a.event_id,
+                   e.source AS event_source,
+                   e.event_type AS event_event_type,
+                   e.priority AS event_priority,
+                   e.payload AS event_payload,
+                   e.status AS event_status
             FROM actions_log a
             LEFT JOIN events e ON e.id::text = a.event_id
             WHERE a.id = $1
@@ -725,6 +1056,60 @@ async def switch_llm_provider(body: LLMProviderSwitch):
 
     log.info("llm_provider_switched", provider=await get_active_provider_name())
     return {"provider": await get_active_provider_name(), "status": "switched"}
+
+
+@router.get("/gchat/spaces")
+async def list_gchat_spaces():
+    """List all Google Chat spaces the user is in."""
+    import asyncio
+    from agent1.google_auth.auth import get_chat_user_service
+
+    service = get_chat_user_service()
+    if service is None:
+        raise HTTPException(400, "Google Chat user mode not configured")
+
+    result = await asyncio.to_thread(
+        lambda: service.spaces().list(pageSize=200).execute(),
+    )
+    spaces = []
+    for s in result.get("spaces", []):
+        spaces.append({
+            "name": s.get("name"),
+            "display_name": s.get("displayName", ""),
+            "type": s.get("type", ""),
+            "space_type": s.get("spaceType", ""),
+        })
+    return spaces
+
+
+@router.get("/gchat/spaces/{space_id}/messages")
+async def list_gchat_messages(space_id: str, limit: int = 20):
+    """Read recent messages from a Google Chat space (as the user)."""
+    import asyncio
+    from agent1.google_auth.auth import get_chat_user_service
+
+    service = get_chat_user_service()
+    if service is None:
+        raise HTTPException(400, "Google Chat user mode not configured")
+
+    parent = f"spaces/{space_id}"
+    result = await asyncio.to_thread(
+        lambda: service.spaces().messages().list(
+            parent=parent, pageSize=limit,
+        ).execute(),
+    )
+    messages = []
+    for m in result.get("messages", []):
+        sender = m.get("sender", {})
+        messages.append({
+            "name": m.get("name"),
+            "text": m.get("text", ""),
+            "sender_name": sender.get("displayName", ""),
+            "sender_type": sender.get("type", ""),
+            "create_time": m.get("createTime", ""),
+            "thread": m.get("thread", {}).get("name", ""),
+        })
+    return messages
 
 
 @router.get("/integrations")

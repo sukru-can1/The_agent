@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import hashlib
 import hmac
-import time
 
-from fastapi import Header, HTTPException, Query, Request
+from fastapi import Header, HTTPException, Request
 
 from agent1.common.logging import get_logger
 from agent1.common.settings import get_settings
@@ -45,11 +43,11 @@ async def verify_google_chat_token(
         raise HTTPException(status_code=401, detail="Empty token")
 
     try:
-        import json
         import base64
+        import json
 
-        from google.oauth2 import id_token as google_id_token
         from google.auth.transport import requests as google_requests
+        from google.oauth2 import id_token as google_id_token
 
         google_request = google_requests.Request()
 
@@ -74,7 +72,7 @@ async def verify_google_chat_token(
 
         # Google Chat HTTP endpoints sign JWTs with issuer=accounts.google.com
         # and audience=the webhook URL. Verify using Google's OAuth2 certs.
-        webhook_url = f"https://webhook-production-50a3.up.railway.app/webhooks/gchat"
+        webhook_url = "https://webhook-production-50a3.up.railway.app/webhooks/gchat"
         claim = None
         last_error = None
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from agent1.common.logging import get_logger
-from agent1.intelligence.proposals import create_proposal, ProposalType
+from agent1.intelligence.proposals import ProposalType, create_proposal
 
 log = get_logger(__name__)
 

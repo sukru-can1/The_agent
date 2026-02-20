@@ -72,6 +72,38 @@ export async function storeKnowledge(content: string, category = "operator_instr
   return res.json();
 }
 
+export async function fetchDraft(draftId: number) {
+  const res = await fetch(`${API}/admin/drafts/${draftId}`);
+  if (!res.ok) throw new Error("Failed to fetch draft");
+  return res.json();
+}
+
+export async function reviseDraft(draftId: number, instruction: string) {
+  const res = await fetch(`${API}/admin/drafts/${draftId}/revise`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ instruction }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.detail || "Revision failed");
+  }
+  return res.json();
+}
+
+export async function approveAndSendDraft(draftId: number, editedBody?: string) {
+  const res = await fetch(`${API}/admin/drafts/${draftId}/approve-and-send`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ edited_body: editedBody }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.detail || "Send failed");
+  }
+  return res.json();
+}
+
 export async function approveDraft(draftId: number, editedBody?: string) {
   const res = await fetch(`${API}/admin/drafts/${draftId}/approve`, {
     method: "POST",
@@ -105,6 +137,29 @@ export async function pauseQueue() {
 
 export async function resumeQueue() {
   const res = await fetch(`${API}/admin/queue/resume`, { method: "POST" });
+  return res.json();
+}
+
+export async function fetchActionDetail(actionId: number) {
+  const res = await fetch(`${API}/admin/actions/${actionId}/with-event`);
+  if (!res.ok) throw new Error("Failed to fetch action detail");
+  return res.json();
+}
+
+export async function submitActionFeedback(
+  actionId: number,
+  comment: string,
+  action: "note" | "redo" | "revert" = "note",
+) {
+  const res = await fetch(`${API}/admin/actions/${actionId}/feedback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ comment, action }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.detail || "Feedback failed");
+  }
   return res.json();
 }
 

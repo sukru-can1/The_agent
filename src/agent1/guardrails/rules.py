@@ -27,12 +27,12 @@ async def check_business_rules(event: Event, classification: ClassificationResul
             "reason": f"Contact {sender} is restricted — requires manual handling",
         }
 
-    # Rule 2: financial/legal topics — block auto-action, require approval
+    # Rule 2: financial/legal topics — process but require approval for all actions
     if classification.involves_financial:
         return {
-            "allowed": False,
+            "allowed": True,
             "rule": "financial_topic",
-            "reason": "Financial topics require manual approval — escalate to Sukru",
+            "reason": "Financial topic — process normally but all outbound actions require approval",
         }
 
     # Rule 3: VIP contacts — don't auto-send, always require approval

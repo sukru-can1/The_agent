@@ -11,15 +11,13 @@ def build_draft_approval_card(
     draft_body: str,
     classification: str,
 ) -> dict:
-    """Build a Chat Card V2 with Approve / Edit / Reject buttons for an email draft."""
-    priority_color = {
-        "urgent": "#D32F2F",
-        "needs_response": "#F57C00",
-        "fyi": "#388E3C",
-    }.get(classification, "#1976D2")
+    """Build a Chat Card V2 with Approve / Revise / Edit / Reject for an email draft.
 
+    Includes a text input for inline AI revision instructions.
+    """
     # Truncate body for card preview
     preview = draft_body[:500] + "..." if len(draft_body) > 500 else draft_body
+    draft_id_str = str(draft_id)
 
     return {
         "cardId": f"draft-{draft_id}",
@@ -67,6 +65,44 @@ def build_draft_approval_card(
                         }
                     ],
                 },
+                # Inline revision input
+                {
+                    "header": "Refine with AI",
+                    "collapsible": True,
+                    "widgets": [
+                        {
+                            "textInput": {
+                                "name": "revision_instruction",
+                                "label": "Revision instruction",
+                                "hintText": "e.g. make it more formal, add tracking info, shorter",
+                                "type": "SINGLE_LINE",
+                            }
+                        },
+                        {
+                            "buttonList": {
+                                "buttons": [
+                                    {
+                                        "text": "Revise Draft",
+                                        "color": {
+                                            "red": 0.50, "green": 0.36,
+                                            "blue": 0.97, "alpha": 1,
+                                        },
+                                        "onClick": {
+                                            "action": {
+                                                "function": "revise_draft",
+                                                "parameters": [
+                                                    {"key": "draft_id", "value": draft_id_str},
+                                                ],
+                                                "loadIndicator": "SPINNER",
+                                            }
+                                        },
+                                    },
+                                ]
+                            }
+                        },
+                    ],
+                },
+                # Action buttons
                 {
                     "widgets": [
                         {
@@ -74,36 +110,45 @@ def build_draft_approval_card(
                                 "buttons": [
                                     {
                                         "text": "Approve & Send",
-                                        "color": {"red": 0.22, "green": 0.56, "blue": 0.24, "alpha": 1},
+                                        "color": {
+                                            "red": 0.22, "green": 0.56,
+                                            "blue": 0.24, "alpha": 1,
+                                        },
                                         "onClick": {
                                             "action": {
                                                 "function": "approve_draft",
                                                 "parameters": [
-                                                    {"key": "draft_id", "value": str(draft_id)},
+                                                    {"key": "draft_id", "value": draft_id_str},
                                                 ],
                                             }
                                         },
                                     },
                                     {
                                         "text": "Edit in Dashboard",
-                                        "color": {"red": 0.10, "green": 0.46, "blue": 0.82, "alpha": 1},
+                                        "color": {
+                                            "red": 0.10, "green": 0.46,
+                                            "blue": 0.82, "alpha": 1,
+                                        },
                                         "onClick": {
                                             "action": {
                                                 "function": "edit_draft",
                                                 "parameters": [
-                                                    {"key": "draft_id", "value": str(draft_id)},
+                                                    {"key": "draft_id", "value": draft_id_str},
                                                 ],
                                             }
                                         },
                                     },
                                     {
                                         "text": "Reject",
-                                        "color": {"red": 0.83, "green": 0.18, "blue": 0.18, "alpha": 1},
+                                        "color": {
+                                            "red": 0.83, "green": 0.18,
+                                            "blue": 0.18, "alpha": 1,
+                                        },
                                         "onClick": {
                                             "action": {
                                                 "function": "reject_draft",
                                                 "parameters": [
-                                                    {"key": "draft_id", "value": str(draft_id)},
+                                                    {"key": "draft_id", "value": draft_id_str},
                                                 ],
                                             }
                                         },
@@ -126,13 +171,6 @@ def build_alert_card(
     event_id: str = "",
 ) -> dict:
     """Build a Chat Card for an alert notification."""
-    icon = {
-        "gmail": "EMAIL",
-        "freshdesk": "TICKET",
-        "feedbacks": "FEEDBACK",
-        "starinfinity": "BOOKMARK",
-    }.get(source, "STAR")
-
     return {
         "cardId": f"alert-{event_id[:8]}",
         "card": {

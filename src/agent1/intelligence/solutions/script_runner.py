@@ -60,8 +60,9 @@ async def run_script(
     The script must define an async function named 'run' that takes keyword arguments.
     Returns the function's return value, or an error dict.
     """
-    import httpx
     import json as json_mod
+
+    import httpx
 
     # Build restricted scope
     scope: dict[str, Any] = {
@@ -90,7 +91,7 @@ async def run_script(
 
         return scope.get("result", "Script executed (no 'run' function or result)")
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return {"error": f"Script timed out after {timeout}s"}
     except Exception as exc:
         log.error("script_execution_error", error=str(exc))

@@ -6,7 +6,7 @@ import json
 
 from agent1.common.db import get_pool
 from agent1.common.logging import get_logger
-from agent1.intelligence.proposals import create_proposal, ProposalType
+from agent1.intelligence.proposals import ProposalType, create_proposal
 from agent1.intelligence.solutions.script_runner import validate_code
 
 log = get_logger(__name__)

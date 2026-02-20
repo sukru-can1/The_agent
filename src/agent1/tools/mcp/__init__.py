@@ -13,8 +13,8 @@ async def start_mcp_servers() -> MCPClientManager:
 
     from agent1.common.logging import get_logger
     from agent1.common.settings import get_settings
-    from agent1.tools.mcp.config import load_mcp_config
     from agent1.tools.mcp.adapter import MCPToolAdapter
+    from agent1.tools.mcp.config import load_mcp_config
     from agent1.tools.registry import register_tool
 
     log = get_logger(__name__)

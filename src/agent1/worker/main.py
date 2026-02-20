@@ -36,7 +36,7 @@ async def main() -> None:
     await get_redis()
 
     # Register all tools (native + MCP + dynamic)
-    from agent1.tools.registry import register_all_tools, register_mcp_tools, register_dynamic_tools
+    from agent1.tools.registry import register_all_tools, register_dynamic_tools, register_mcp_tools
 
     register_all_tools()
     await register_mcp_tools()

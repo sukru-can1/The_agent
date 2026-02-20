@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from agent1.common.logging import get_logger
 from agent1.common.models import ClassificationResult, Event
-from agent1.guardrails.rules import check_business_rules
 from agent1.guardrails.rate_limits import check_rate_limits
+from agent1.guardrails.rules import check_business_rules
 
 log = get_logger(__name__)
 
@@ -51,7 +51,7 @@ async def _notify_block(event: Event, rule_result: dict) -> None:
 
     # Create override proposal
     try:
-        from agent1.intelligence.proposals import create_proposal, ProposalType
+        from agent1.intelligence.proposals import ProposalType, create_proposal
         await create_proposal(
             type=ProposalType.GUARDRAIL_OVERRIDE,
             title=f"Blocked: {event.source.value} — {rule_name}",

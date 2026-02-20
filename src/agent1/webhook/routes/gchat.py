@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 from fastapi import APIRouter, Depends, Request
 
 from agent1.common.db import get_pool
@@ -146,16 +144,46 @@ async def _handle_message(body: dict, is_addon: bool) -> dict:
     return _chat_response("Processing...", is_addon)
 
 
+def _extract_form_inputs(body: dict) -> dict:
+    """Extract form input values from a CARD_CLICKED event."""
+    form_inputs = (
+        body.get("commonEventObject", {}).get("formInputs", {})
+        or body.get("common", {}).get("formInputs", {})
+    )
+    result: dict = {}
+    for name, data in form_inputs.items():
+        if "stringInputs" in data:
+            values = data["stringInputs"]["value"]
+            result[name] = values[0] if len(values) == 1 else values
+        elif "dateInput" in data:
+            result[name] = data["dateInput"]["msSinceEpoch"]
+    return result
+
+
 async def _handle_card_action(body: dict, is_addon: bool) -> dict:
     """Handle a Chat Card button click — approve/reject drafts, ack alerts."""
+    # Support both legacy and Workspace Add-on event formats
     action = body.get("action", {}) or body.get("common", {}).get("invokedFunction", "")
     function_name = action.get("function", "") if isinstance(action, dict) else action
+
+    # Workspace Add-on format: function name in commonEventObject
+    if not function_name:
+        ceo = body.get("commonEventObject", {})
+        function_name = ceo.get("invokedFunction", "")
+
     parameters = {}
 
-    # Parse parameters from action
+    # Parse parameters from action dict
     if isinstance(action, dict):
         for p in action.get("parameters", []):
             parameters[p.get("key", "")] = p.get("value", "")
+
+    # Also parse from commonEventObject.parameters
+    if not parameters:
+        ceo = body.get("commonEventObject", {})
+        ceo_params = ceo.get("parameters", {})
+        if isinstance(ceo_params, dict):
+            parameters = ceo_params
 
     user = body.get("user", {}).get("displayName", "Unknown")
     log.info("card_action", function=function_name, params=parameters, user=user)
@@ -168,6 +196,9 @@ async def _handle_card_action(body: dict, is_addon: bool) -> dict:
 
     if function_name == "edit_draft":
         return _edit_draft_redirect(parameters, is_addon)
+
+    if function_name == "revise_draft":
+        return await _revise_draft_from_chat(body, parameters, user, is_addon)
 
     if function_name == "ack_alert":
         return _chat_response(f"Alert acknowledged by {user}.", is_addon)
@@ -188,8 +219,92 @@ async def _handle_card_action(body: dict, is_addon: bool) -> dict:
     return _chat_response("Action received.", is_addon)
 
 
+async def _revise_draft_from_chat(
+    body: dict, params: dict, user: str, is_addon: bool
+) -> dict:
+    """Revise a draft using AI based on the text input from the Chat card."""
+    draft_id = params.get("draft_id")
+    if not draft_id:
+        return _chat_response("Error: No draft_id provided.", is_addon)
+
+    form_inputs = _extract_form_inputs(body)
+    instruction = form_inputs.get("revision_instruction", "").strip()
+    if not instruction:
+        return _chat_response("Please type a revision instruction first.", is_addon)
+
+    try:
+        from agent1.drafts.refiner import revise_draft
+
+        draft_id_int = int(draft_id)
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            draft = await conn.fetchrow(
+                """SELECT id, original_body, draft_body, edited_body, subject,
+                          from_address, status FROM email_drafts WHERE id = $1""",
+                draft_id_int,
+            )
+        if not draft:
+            return _chat_response(f"Draft #{draft_id} not found.", is_addon)
+        if draft["status"] not in ("pending", "approved"):
+            return _chat_response(f"Draft #{draft_id} is {draft['status']}.", is_addon)
+
+        current_body = draft["edited_body"] or draft["draft_body"]
+        result = await revise_draft(
+            original_body=draft["original_body"],
+            current_body=current_body,
+            subject=draft["subject"] or "",
+            from_address=draft["from_address"] or "",
+            instruction=instruction,
+        )
+
+        # Store revised body
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE email_drafts SET edited_body = $2 WHERE id = $1",
+                draft_id_int,
+                result["revised_body"],
+            )
+
+        # Return updated card with new draft body
+        from agent1.tools.chat_cards import build_draft_approval_card
+        card = build_draft_approval_card(
+            draft_id=draft_id_int,
+            subject=draft["subject"] or "",
+            from_address=draft["from_address"] or "",
+            to_address="",
+            draft_body=result["revised_body"],
+            classification=draft["classification"] or "needs_response",
+        )
+
+        log.info("draft_revised_via_chat", draft_id=draft_id_int, user=user)
+
+        # Update the original message with the revised card
+        if is_addon:
+            return {
+                "hostAppDataAction": {
+                    "chatDataAction": {
+                        "updateMessageAction": {
+                            "message": {
+                                "text": f"Draft #{draft_id} revised by {user}: \"{instruction}\"",
+                                "cardsV2": [card],
+                            }
+                        }
+                    }
+                }
+            }
+        return {
+            "actionResponse": {"type": "UPDATE_MESSAGE"},
+            "text": f"Draft #{draft_id} revised by {user}: \"{instruction}\"",
+            "cardsV2": [card],
+        }
+
+    except Exception as exc:
+        log.warning("draft_revise_chat_error", error=str(exc))
+        return _chat_response(f"Error revising draft: {exc}", is_addon)
+
+
 async def _approve_draft(params: dict, user: str, is_addon: bool) -> dict:
-    """Approve a draft directly from Chat card button."""
+    """Approve and send a draft directly from Chat card button."""
     draft_id = params.get("draft_id")
     if not draft_id:
         return _chat_response("Error: No draft_id provided.", is_addon)
@@ -204,16 +319,37 @@ async def _approve_draft(params: dict, user: str, is_addon: bool) -> dict:
             )
             if not draft:
                 return _chat_response(f"Draft #{draft_id} not found.", is_addon)
-            if draft["status"] != "pending":
+            if draft["status"] not in ("pending", "approved"):
                 return _chat_response(f"Draft #{draft_id} is already {draft['status']}.", is_addon)
 
+            # Approve first
             await conn.execute(
                 "UPDATE email_drafts SET status = 'approved', approved_at = NOW() WHERE id = $1",
                 draft_id_int,
             )
 
-        log.info("draft_approved_via_chat", draft_id=draft_id_int, user=user)
-        return _chat_response(f"Draft #{draft_id} approved by {user}. Sending email...", is_addon)
+        # Send the email
+        try:
+            from agent1.tools.gmail import GmailSendApprovedTool
+            send_tool = GmailSendApprovedTool()
+            result = await send_tool.execute(draft_id=draft_id_int)
+            if "error" in result:
+                log.warning("draft_send_after_approve_failed", error=result["error"])
+                return _chat_response(
+                    f"Draft #{draft_id} approved by {user}, but send failed: {result['error']}",
+                    is_addon,
+                )
+        except Exception as send_exc:
+            log.warning("draft_send_after_approve_error", error=str(send_exc))
+            return _chat_response(
+                f"Draft #{draft_id} approved by {user}, but send failed: {send_exc}",
+                is_addon,
+            )
+
+        log.info("draft_approved_and_sent_via_chat", draft_id=draft_id_int, user=user)
+        return _chat_response(
+            f"Draft #{draft_id} approved by {user} and email sent successfully.", is_addon
+        )
     except Exception as exc:
         log.warning("draft_approve_error", error=str(exc))
         return _chat_response(f"Error approving draft: {exc}", is_addon)
