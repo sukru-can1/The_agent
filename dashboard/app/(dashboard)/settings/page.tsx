@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Wrench, Send } from "lucide-react";
+import { Wrench, Send, Cpu } from "lucide-react";
 import IntegrationCard from "@/components/cards/IntegrationCard";
 import type { Integration } from "@/lib/types";
 
@@ -12,9 +12,17 @@ interface ConfigEntry {
   description: string | null;
 }
 
+interface LLMProviderInfo {
+  provider: string;
+  available: boolean;
+  models: { flash: string; fast: string; default: string; pro: string };
+}
+
 export default function SettingsPage() {
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [config, setConfig] = useState<ConfigEntry[]>([]);
+  const [llmProvider, setLlmProvider] = useState<LLMProviderInfo | null>(null);
+  const [switching, setSwitching] = useState(false);
   const [loading, setLoading] = useState(true);
   const [injectText, setInjectText] = useState("");
   const [injecting, setInjecting] = useState(false);
@@ -22,12 +30,14 @@ export default function SettingsPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [intRes, cfgRes] = await Promise.all([
+      const [intRes, cfgRes, llmRes] = await Promise.all([
         fetch("/api/admin/integrations"),
         fetch("/api/admin/config"),
+        fetch("/api/admin/llm-provider"),
       ]);
       if (intRes.ok) setIntegrations(await intRes.json());
       if (cfgRes.ok) setConfig(await cfgRes.json());
+      if (llmRes.ok) setLlmProvider(await llmRes.json());
     } catch {
       // API not available
     }
@@ -64,8 +74,76 @@ export default function SettingsPage() {
     );
   }
 
+  const handleSwitchProvider = async (name: string) => {
+    if (switching || name === llmProvider?.provider) return;
+    setSwitching(true);
+    try {
+      const res = await fetch("/api/admin/llm-provider", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: name }),
+      });
+      if (res.ok) {
+        const llmRes = await fetch("/api/admin/llm-provider");
+        if (llmRes.ok) setLlmProvider(await llmRes.json());
+      } else {
+        const err = await res.json().catch(() => ({ detail: "Switch failed" }));
+        alert(err.detail || "Failed to switch provider");
+      }
+    } catch {
+      // ignore
+    }
+    setSwitching(false);
+  };
+
   return (
     <div className="space-y-8 max-w-4xl">
+      {/* LLM Provider */}
+      {llmProvider && (
+        <section>
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-3">
+            LLM Provider
+          </h2>
+          <div className="p-4 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] space-y-4">
+            <div className="flex items-center gap-3">
+              <Cpu size={16} className="text-[var(--color-accent)] shrink-0" />
+              <div className="flex gap-2">
+                {["gemini", "openrouter"].map((p) => (
+                  <button
+                    key={p}
+                    onClick={() => handleSwitchProvider(p)}
+                    disabled={switching}
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                      llmProvider.provider === p
+                        ? "bg-[var(--color-accent)] text-white"
+                        : "bg-[var(--color-bg)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-[var(--color-border)]"
+                    } disabled:opacity-40`}
+                  >
+                    {p === "gemini" ? "Google Gemini" : "OpenRouter"}
+                  </button>
+                ))}
+              </div>
+              {switching && (
+                <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+              )}
+              <span className={`ml-auto text-[10px] font-medium ${llmProvider.available ? "text-emerald-400" : "text-red-400"}`}>
+                {llmProvider.available ? "CONNECTED" : "NO API KEY"}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {(["flash", "fast", "default", "pro"] as const).map((tier) => (
+                <div key={tier} className="flex items-center gap-2 px-3 py-2 rounded-md bg-[var(--color-bg)]">
+                  <span className="text-[10px] uppercase font-semibold text-[var(--color-text-dim)] w-12">{tier}</span>
+                  <span className="text-xs font-mono text-[var(--color-text-muted)] truncate">
+                    {llmProvider.models[tier]}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
       {/* Integrations */}
       <section>
         <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-3">
