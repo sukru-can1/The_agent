@@ -118,7 +118,7 @@ async def classify_event(event: Event) -> ClassificationResult:
 
     Returns a ClassificationResult with category, urgency, complexity, etc.
     """
-    if not provider_available():
+    if not await provider_available():
         # Fallback classification when no API key (dev/testing)
         return ClassificationResult(
             category=event.event_type,
@@ -140,7 +140,7 @@ async def classify_event(event: Event) -> ClassificationResult:
     )
 
     try:
-        provider = get_provider()
+        provider = await get_provider()
         response = await provider.generate(
             model=model,
             messages=[{"role": "user", "content": f"Classify this event:\n\n{context}"}],

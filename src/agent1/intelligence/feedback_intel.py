@@ -25,10 +25,10 @@ def _parse_rules_from_response(response: str) -> list[str]:
 
 async def _call_flash(prompt: str) -> str:
     """Call flash-tier model for quick analysis. Returns response text."""
-    if not provider_available():
+    if not await provider_available():
         return ""
 
-    provider = get_provider()
+    provider = await get_provider()
     response = await provider.generate(
         model=get_flash_model(),
         messages=[{"role": "user", "content": prompt}],

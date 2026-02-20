@@ -8,7 +8,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agent1.reasoning.providers._base import LLMProvider, LLMResponse, ToolCall
-from agent1.reasoning.providers._factory import get_provider, provider_available, reset_provider
+from agent1.reasoning.providers._factory import (
+    get_provider,
+    provider_available,
+    reset_provider,
+)
 
 
 # ===========================================================================
@@ -413,8 +417,15 @@ class TestOpenRouterMessages:
 
 
 # ===========================================================================
-# Factory tests
+# Factory tests (async — mocks Redis)
 # ===========================================================================
+
+
+def _mock_redis_no_override():
+    """Mock Redis that returns no override (None)."""
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(return_value=None)
+    return mock_redis
 
 
 class TestFactory:
@@ -423,52 +434,76 @@ class TestFactory:
 
     def teardown_method(self):
         reset_provider()
-        # Reset settings singleton
         import agent1.common.settings as s
         s._settings = None
 
-    def test_default_provider_is_gemini(self, monkeypatch):
+    async def test_default_provider_is_gemini(self, monkeypatch):
         monkeypatch.setenv("GEMINI_API_KEY", "test-key")
         import agent1.common.settings as s
         s._settings = None
 
-        assert provider_available()
+        with patch(
+            "agent1.common.redis_client.get_redis",
+            new_callable=AsyncMock,
+            return_value=_mock_redis_no_override(),
+        ):
+            assert await provider_available()
 
-    def test_openrouter_available(self, monkeypatch):
+    async def test_openrouter_available(self, monkeypatch):
         monkeypatch.setenv("LLM_PROVIDER", "openrouter")
         monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
         import agent1.common.settings as s
         s._settings = None
 
-        assert provider_available()
+        with patch(
+            "agent1.common.redis_client.get_redis",
+            new_callable=AsyncMock,
+            return_value=_mock_redis_no_override(),
+        ):
+            assert await provider_available()
 
-    def test_missing_gemini_key_not_available(self, monkeypatch):
+    async def test_missing_gemini_key_not_available(self, monkeypatch):
         monkeypatch.setenv("GEMINI_API_KEY", "")
         monkeypatch.setenv("LLM_PROVIDER", "gemini")
         import agent1.common.settings as s
         s._settings = None
 
-        assert not provider_available()
+        with patch(
+            "agent1.common.redis_client.get_redis",
+            new_callable=AsyncMock,
+            return_value=_mock_redis_no_override(),
+        ):
+            assert not await provider_available()
 
-    def test_missing_openrouter_key_raises(self, monkeypatch):
+    async def test_missing_openrouter_key_raises(self, monkeypatch):
         monkeypatch.setenv("LLM_PROVIDER", "openrouter")
         monkeypatch.setenv("OPENROUTER_API_KEY", "")
         import agent1.common.settings as s
         s._settings = None
 
-        with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
-            get_provider()
+        with patch(
+            "agent1.common.redis_client.get_redis",
+            new_callable=AsyncMock,
+            return_value=_mock_redis_no_override(),
+        ):
+            with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
+                await get_provider()
 
-    def test_missing_gemini_key_raises(self, monkeypatch):
+    async def test_missing_gemini_key_raises(self, monkeypatch):
         monkeypatch.setenv("LLM_PROVIDER", "gemini")
         monkeypatch.setenv("GEMINI_API_KEY", "")
         import agent1.common.settings as s
         s._settings = None
 
-        with pytest.raises(RuntimeError, match="GEMINI_API_KEY"):
-            get_provider()
+        with patch(
+            "agent1.common.redis_client.get_redis",
+            new_callable=AsyncMock,
+            return_value=_mock_redis_no_override(),
+        ):
+            with pytest.raises(RuntimeError, match="GEMINI_API_KEY"):
+                await get_provider()
 
-    def test_get_provider_returns_gemini(self, monkeypatch):
+    async def test_get_provider_returns_gemini(self, monkeypatch):
         monkeypatch.setenv("LLM_PROVIDER", "gemini")
         monkeypatch.setenv("GEMINI_API_KEY", "test-key")
         import agent1.common.settings as s
@@ -476,10 +511,15 @@ class TestFactory:
 
         from agent1.reasoning.providers._gemini import GeminiProvider
 
-        p = get_provider()
-        assert isinstance(p, GeminiProvider)
+        with patch(
+            "agent1.common.redis_client.get_redis",
+            new_callable=AsyncMock,
+            return_value=_mock_redis_no_override(),
+        ):
+            p = await get_provider()
+            assert isinstance(p, GeminiProvider)
 
-    def test_get_provider_returns_openrouter(self, monkeypatch):
+    async def test_get_provider_returns_openrouter(self, monkeypatch):
         monkeypatch.setenv("LLM_PROVIDER", "openrouter")
         monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
         import agent1.common.settings as s
@@ -487,26 +527,62 @@ class TestFactory:
 
         from agent1.reasoning.providers._openrouter import OpenRouterProvider
 
-        p = get_provider()
-        assert isinstance(p, OpenRouterProvider)
+        with patch(
+            "agent1.common.redis_client.get_redis",
+            new_callable=AsyncMock,
+            return_value=_mock_redis_no_override(),
+        ):
+            p = await get_provider()
+            assert isinstance(p, OpenRouterProvider)
 
-    def test_singleton_behavior(self, monkeypatch):
+    async def test_singleton_behavior(self, monkeypatch):
         monkeypatch.setenv("LLM_PROVIDER", "gemini")
         monkeypatch.setenv("GEMINI_API_KEY", "test-key")
         import agent1.common.settings as s
         s._settings = None
 
-        p1 = get_provider()
-        p2 = get_provider()
-        assert p1 is p2
+        with patch(
+            "agent1.common.redis_client.get_redis",
+            new_callable=AsyncMock,
+            return_value=_mock_redis_no_override(),
+        ):
+            p1 = await get_provider()
+            p2 = await get_provider()
+            assert p1 is p2
 
-    def test_reset_clears_singleton(self, monkeypatch):
+    async def test_reset_clears_singleton(self, monkeypatch):
         monkeypatch.setenv("LLM_PROVIDER", "gemini")
         monkeypatch.setenv("GEMINI_API_KEY", "test-key")
         import agent1.common.settings as s
         s._settings = None
 
-        p1 = get_provider()
-        reset_provider()
-        p2 = get_provider()
-        assert p1 is not p2
+        with patch(
+            "agent1.common.redis_client.get_redis",
+            new_callable=AsyncMock,
+            return_value=_mock_redis_no_override(),
+        ):
+            p1 = await get_provider()
+            reset_provider()
+            p2 = await get_provider()
+            assert p1 is not p2
+
+    async def test_redis_override_switches_provider(self, monkeypatch):
+        """When Redis has an override, it takes priority over env var."""
+        monkeypatch.setenv("LLM_PROVIDER", "gemini")
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+        import agent1.common.settings as s
+        s._settings = None
+
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(return_value=b"openrouter")
+
+        from agent1.reasoning.providers._openrouter import OpenRouterProvider
+
+        with patch(
+            "agent1.common.redis_client.get_redis",
+            new_callable=AsyncMock,
+            return_value=mock_redis,
+        ):
+            p = await get_provider()
+            assert isinstance(p, OpenRouterProvider)

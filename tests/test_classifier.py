@@ -172,6 +172,7 @@ class TestClassifier:
     async def test_fallback_when_no_api_key(self, sample_email_event):
         with patch(
             "agent1.reasoning.classifier.provider_available",
+            new_callable=AsyncMock,
             return_value=False,
         ):
             result = await classify_event(sample_email_event)
@@ -199,8 +200,16 @@ class TestClassifier:
         )
 
         with (
-            patch("agent1.reasoning.classifier.provider_available", return_value=True),
-            patch("agent1.reasoning.classifier.get_provider", return_value=mock_provider),
+            patch(
+                "agent1.reasoning.classifier.provider_available",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
+                "agent1.reasoning.classifier.get_provider",
+                new_callable=AsyncMock,
+                return_value=mock_provider,
+            ),
             patch("agent1.reasoning.classifier.get_fast_model", return_value="test-model"),
         ):
             result = await classify_event(sample_email_event)
@@ -230,8 +239,16 @@ class TestClassifier:
         )
 
         with (
-            patch("agent1.reasoning.classifier.provider_available", return_value=True),
-            patch("agent1.reasoning.classifier.get_provider", return_value=mock_provider),
+            patch(
+                "agent1.reasoning.classifier.provider_available",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
+                "agent1.reasoning.classifier.get_provider",
+                new_callable=AsyncMock,
+                return_value=mock_provider,
+            ),
             patch("agent1.reasoning.classifier.get_fast_model", return_value="test-model"),
         ):
             result = await classify_event(sample_email_event)
@@ -254,8 +271,16 @@ class TestClassifier:
         )
 
         with (
-            patch("agent1.reasoning.classifier.provider_available", return_value=True),
-            patch("agent1.reasoning.classifier.get_provider", return_value=mock_provider),
+            patch(
+                "agent1.reasoning.classifier.provider_available",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
+                "agent1.reasoning.classifier.get_provider",
+                new_callable=AsyncMock,
+                return_value=mock_provider,
+            ),
             patch("agent1.reasoning.classifier.get_fast_model", return_value="test-model"),
         ):
             result = await classify_event(sample_email_event)
@@ -268,8 +293,16 @@ class TestClassifier:
         mock_provider.generate = AsyncMock(side_effect=Exception("API error"))
 
         with (
-            patch("agent1.reasoning.classifier.provider_available", return_value=True),
-            patch("agent1.reasoning.classifier.get_provider", return_value=mock_provider),
+            patch(
+                "agent1.reasoning.classifier.provider_available",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
+                "agent1.reasoning.classifier.get_provider",
+                new_callable=AsyncMock,
+                return_value=mock_provider,
+            ),
             patch("agent1.reasoning.classifier.get_fast_model", return_value="test-model"),
         ):
             result = await classify_event(sample_email_event)

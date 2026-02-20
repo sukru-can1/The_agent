@@ -683,10 +683,10 @@ async def get_llm_provider():
     from agent1.reasoning.router import get_fast_model, get_flash_model
 
     settings = get_settings()
-    name = get_active_provider_name()
+    name = await get_active_provider_name()
     return {
         "provider": name,
-        "available": provider_available(),
+        "available": await provider_available(),
         "models": {
             "flash": get_flash_model(),
             "fast": get_fast_model(),
@@ -713,18 +713,18 @@ async def switch_llm_provider(body: LLMProviderSwitch):
     if name not in ("gemini", "openrouter"):
         raise HTTPException(400, f"Unknown provider: {name}")
 
-    set_provider_override(name)
+    await set_provider_override(name)
 
-    if not provider_available():
+    if not await provider_available():
         # Roll back — API key not configured
-        set_provider_override(None)
+        await set_provider_override(None)
         raise HTTPException(
             400,
             f"Cannot switch to {name}: API key not configured",
         )
 
-    log.info("llm_provider_switched", provider=get_active_provider_name())
-    return {"provider": get_active_provider_name(), "status": "switched"}
+    log.info("llm_provider_switched", provider=await get_active_provider_name())
+    return {"provider": await get_active_provider_name(), "status": "switched"}
 
 
 @router.get("/integrations")

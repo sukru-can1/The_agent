@@ -35,12 +35,12 @@ async def reason_and_act(
 
     Returns a dict with model_used, input_tokens, output_tokens, and result.
     """
-    if not provider_available():
+    if not await provider_available():
         log.warning("no_api_key_skipping_reasoning")
         return {"model_used": "none", "input_tokens": 0, "output_tokens": 0, "result": "skipped"}
 
     model = select_model(classification, event)
-    provider = get_provider()
+    provider = await get_provider()
     tool_defs = get_tool_definitions()
 
     # Build context message

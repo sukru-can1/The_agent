@@ -46,14 +46,14 @@ async def create_plan(event: Event, classification: ClassificationResult) -> dic
         return plan
 
     # Complex events get an LLM-generated plan
-    if not provider_available():
+    if not await provider_available():
         return _fallback_plan(event, classification, model)
 
     try:
         from agent1.reasoning.classifier import _extract_json
 
         fast_model = get_fast_model()
-        provider = get_provider()
+        provider = await get_provider()
         response = await provider.generate(
             model=fast_model,
             messages=[{

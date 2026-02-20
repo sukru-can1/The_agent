@@ -326,7 +326,7 @@ async def _handle_chat_auto_response(
     from agent1.reasoning.providers import get_provider, provider_available
     from agent1.reasoning.router import get_flash_model
 
-    if not provider_available():
+    if not await provider_available():
         return False
 
     text = event.payload.get("text", "").strip()
@@ -364,7 +364,7 @@ async def _handle_chat_auto_response(
     # Quick flash-tier response (fastest/cheapest)
     try:
         flash_model = get_flash_model()
-        provider = get_provider()
+        provider = await get_provider()
         response = await provider.generate(
             model=flash_model,
             messages=[{"role": "user", "content": text}],
