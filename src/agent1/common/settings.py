@@ -11,12 +11,22 @@ class Settings(BaseSettings):
 
     model_config = {"env_prefix": "", "env_file": ".env", "extra": "ignore"}
 
+    # --- LLM Provider ---
+    llm_provider: str = "gemini"  # "gemini" or "openrouter"
+
     # --- Google Gemini ---
     gemini_api_key: str = ""
     gemini_model_default: str = "gemini-2.5-pro"     # moderate
     gemini_model_fast: str = "gemini-2.5-flash"      # classifier/planner
     gemini_model_pro: str = "gemini-3-pro"           # most complex
     gemini_model_flash: str = "gemini-2.0-flash"     # auto-response, trivial
+
+    # --- OpenRouter ---
+    openrouter_api_key: str = ""
+    openrouter_model_flash: str = "google/gemini-2.0-flash-001"
+    openrouter_model_fast: str = "anthropic/claude-haiku-4"
+    openrouter_model_default: str = "anthropic/claude-sonnet-4"
+    openrouter_model_pro: str = "anthropic/claude-opus-4"
 
     # --- Voyage AI ---
     voyage_api_key: str = ""

@@ -1,17 +1,15 @@
-"""Planning step before tool execution — uses Gemini to create action plans."""
+"""Planning step before tool execution — uses LLM provider to create action plans."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-from google import genai
-from google.genai import types
-
 from agent1.common.logging import get_logger
 from agent1.common.models import ClassificationResult, Event
 from agent1.common.observability import trace_operation
-from agent1.common.settings import get_settings
+from agent1.reasoning.providers import get_provider, provider_available
+from agent1.reasoning.router import get_fast_model
 
 log = get_logger(__name__)
 
@@ -47,35 +45,36 @@ async def create_plan(event: Event, classification: ClassificationResult) -> dic
         log.info("plan_created", event_id=str(event.id), complexity="simple")
         return plan
 
-    # Complex events get a Gemini-generated plan
-    settings = get_settings()
-    if not settings.gemini_api_key:
+    # Complex events get an LLM-generated plan
+    if not provider_available():
         return _fallback_plan(event, classification, model)
 
     try:
         from agent1.reasoning.classifier import _extract_json
 
-        client = genai.Client(api_key=settings.gemini_api_key)
-        response = await client.aio.models.generate_content(
-            model=settings.gemini_model_fast,
-            contents=(
-                f"Event: {event.event_type} from {event.source.value}\n"
-                f"Priority: {event.priority}\n"
-                f"Classification: category={classification.category}, "
-                f"urgency={classification.urgency}, "
-                f"complexity={classification.complexity.value}, "
-                f"involves_vip={classification.involves_vip}, "
-                f"involves_financial={classification.involves_financial}\n"
-                f"Payload: {json.dumps(event.payload, default=str)[:1000]}"
-            ),
-            config=types.GenerateContentConfig(
-                system_instruction=PLANNER_PROMPT,
-                response_mime_type="application/json",
-                max_output_tokens=500,
-            ),
+        fast_model = get_fast_model()
+        provider = get_provider()
+        response = await provider.generate(
+            model=fast_model,
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"Event: {event.event_type} from {event.source.value}\n"
+                    f"Priority: {event.priority}\n"
+                    f"Classification: category={classification.category}, "
+                    f"urgency={classification.urgency}, "
+                    f"complexity={classification.complexity.value}, "
+                    f"involves_vip={classification.involves_vip}, "
+                    f"involves_financial={classification.involves_financial}\n"
+                    f"Payload: {json.dumps(event.payload, default=str)[:1000]}"
+                ),
+            }],
+            max_tokens=500,
+            json_mode=True,
+            system=PLANNER_PROMPT,
         )
 
-        plan = _extract_json(response.text)
+        plan = _extract_json(response.text or "")
         plan["model"] = model
         plan["event_type"] = event.event_type
         plan["source"] = event.source.value
@@ -83,7 +82,7 @@ async def create_plan(event: Event, classification: ClassificationResult) -> dic
             "plan_created",
             event_id=str(event.id),
             complexity="complex",
-            model=settings.gemini_model_fast,
+            model=fast_model,
         )
         return plan
 

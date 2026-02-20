@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from agent1.common.models import Complexity, Priority
 from agent1.reasoning.classifier import _extract_json, _fix_truncated_json, classify_event
+from agent1.reasoning.providers._base import LLMResponse
 
 
 # ===========================================================================
@@ -61,7 +62,6 @@ class TestExtractJson:
     def test_trailing_comma(self):
         """Gemini sometimes leaves a trailing comma."""
         text = '{"category": "spam", "urgency": 9,}'
-        # _fix_truncated_json strips trailing comma before closing
         result = _extract_json(text)
         assert result["category"] == "spam"
 
@@ -168,26 +168,11 @@ class TestFixTruncatedJson:
 # ===========================================================================
 
 
-def _mock_settings(**overrides):
-    defaults = {
-        "gemini_api_key": "",
-        "gemini_model_fast": "gemini-2.5-flash",
-    }
-    defaults.update(overrides)
-    return MagicMock(**defaults)
-
-
-def _mock_gemini_response(text: str) -> MagicMock:
-    response = MagicMock()
-    response.text = text
-    return response
-
-
 class TestClassifier:
     async def test_fallback_when_no_api_key(self, sample_email_event):
         with patch(
-            "agent1.reasoning.classifier.get_settings",
-            return_value=_mock_settings(),
+            "agent1.reasoning.classifier.provider_available",
+            return_value=False,
         ):
             result = await classify_event(sample_email_event)
         assert result.category == sample_email_event.event_type
@@ -208,22 +193,15 @@ class TestClassifier:
             "is_teachable_rule": False,
         }
 
-        mock_aio = AsyncMock()
-        mock_aio.models.generate_content = AsyncMock(
-            return_value=_mock_gemini_response(json.dumps(json_data))
+        mock_provider = AsyncMock()
+        mock_provider.generate = AsyncMock(
+            return_value=LLMResponse(text=json.dumps(json_data))
         )
-        mock_client = MagicMock()
-        mock_client.aio = mock_aio
 
         with (
-            patch(
-                "agent1.reasoning.classifier.get_settings",
-                return_value=_mock_settings(gemini_api_key="key"),
-            ),
-            patch(
-                "agent1.reasoning.classifier.genai.Client",
-                return_value=mock_client,
-            ),
+            patch("agent1.reasoning.classifier.provider_available", return_value=True),
+            patch("agent1.reasoning.classifier.get_provider", return_value=mock_provider),
+            patch("agent1.reasoning.classifier.get_fast_model", return_value="test-model"),
         ):
             result = await classify_event(sample_email_event)
 
@@ -246,24 +224,15 @@ class TestClassifier:
             "is_teachable_rule": False,
         }
 
-        mock_aio = AsyncMock()
-        mock_aio.models.generate_content = AsyncMock(
-            return_value=_mock_gemini_response(
-                f"```json\n{json.dumps(json_data)}\n```"
-            )
+        mock_provider = AsyncMock()
+        mock_provider.generate = AsyncMock(
+            return_value=LLMResponse(text=f"```json\n{json.dumps(json_data)}\n```")
         )
-        mock_client = MagicMock()
-        mock_client.aio = mock_aio
 
         with (
-            patch(
-                "agent1.reasoning.classifier.get_settings",
-                return_value=_mock_settings(gemini_api_key="key"),
-            ),
-            patch(
-                "agent1.reasoning.classifier.genai.Client",
-                return_value=mock_client,
-            ),
+            patch("agent1.reasoning.classifier.provider_available", return_value=True),
+            patch("agent1.reasoning.classifier.get_provider", return_value=mock_provider),
+            patch("agent1.reasoning.classifier.get_fast_model", return_value="test-model"),
         ):
             result = await classify_event(sample_email_event)
 
@@ -271,7 +240,7 @@ class TestClassifier:
         assert result.urgency == Priority.BACKGROUND
 
     async def test_handles_truncated_json(self, sample_email_event):
-        """When Gemini truncates output, classifier recovers what it can."""
+        """When LLM truncates output, classifier recovers what it can."""
         truncated = (
             '{"category": "customer_complaint", "urgency": 3, '
             '"complexity": "moderate", "involves_vip": false, '
@@ -279,22 +248,15 @@ class TestClassifier:
             '"confidence": 0.85, "detected_language": "en'
         )
 
-        mock_aio = AsyncMock()
-        mock_aio.models.generate_content = AsyncMock(
-            return_value=_mock_gemini_response(truncated)
+        mock_provider = AsyncMock()
+        mock_provider.generate = AsyncMock(
+            return_value=LLMResponse(text=truncated)
         )
-        mock_client = MagicMock()
-        mock_client.aio = mock_aio
 
         with (
-            patch(
-                "agent1.reasoning.classifier.get_settings",
-                return_value=_mock_settings(gemini_api_key="key"),
-            ),
-            patch(
-                "agent1.reasoning.classifier.genai.Client",
-                return_value=mock_client,
-            ),
+            patch("agent1.reasoning.classifier.provider_available", return_value=True),
+            patch("agent1.reasoning.classifier.get_provider", return_value=mock_provider),
+            patch("agent1.reasoning.classifier.get_fast_model", return_value="test-model"),
         ):
             result = await classify_event(sample_email_event)
 
@@ -302,22 +264,13 @@ class TestClassifier:
         assert result.urgency == Priority.HIGH
 
     async def test_handles_api_error(self, sample_email_event):
-        mock_aio = AsyncMock()
-        mock_aio.models.generate_content = AsyncMock(
-            side_effect=Exception("API error")
-        )
-        mock_client = MagicMock()
-        mock_client.aio = mock_aio
+        mock_provider = AsyncMock()
+        mock_provider.generate = AsyncMock(side_effect=Exception("API error"))
 
         with (
-            patch(
-                "agent1.reasoning.classifier.get_settings",
-                return_value=_mock_settings(gemini_api_key="key"),
-            ),
-            patch(
-                "agent1.reasoning.classifier.genai.Client",
-                return_value=mock_client,
-            ),
+            patch("agent1.reasoning.classifier.provider_available", return_value=True),
+            patch("agent1.reasoning.classifier.get_provider", return_value=mock_provider),
+            patch("agent1.reasoning.classifier.get_fast_model", return_value="test-model"),
         ):
             result = await classify_event(sample_email_event)
 

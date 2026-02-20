@@ -1,13 +1,10 @@
-"""Fast event classification using Gemini Flash."""
+"""Fast event classification using LLM provider."""
 
 from __future__ import annotations
 
 import json
 import re
 from pathlib import Path
-
-from google import genai
-from google.genai import types
 
 from agent1.common.logging import get_logger
 from agent1.common.models import (
@@ -17,7 +14,8 @@ from agent1.common.models import (
     Priority,
 )
 from agent1.common.observability import trace_operation
-from agent1.common.settings import get_settings
+from agent1.reasoning.providers import get_provider, provider_available
+from agent1.reasoning.router import get_fast_model
 
 log = get_logger(__name__)
 
@@ -116,13 +114,11 @@ def _fix_truncated_json(text: str) -> str:
 
 @trace_operation("classify_event")
 async def classify_event(event: Event) -> ClassificationResult:
-    """Classify an event using Gemini Flash for fast, cheap categorization.
+    """Classify an event using the configured LLM provider.
 
     Returns a ClassificationResult with category, urgency, complexity, etc.
     """
-    settings = get_settings()
-
-    if not settings.gemini_api_key:
+    if not provider_available():
         # Fallback classification when no API key (dev/testing)
         return ClassificationResult(
             category=event.event_type,
@@ -132,7 +128,7 @@ async def classify_event(event: Event) -> ClassificationResult:
             confidence=0.5,
         )
 
-    client = genai.Client(api_key=settings.gemini_api_key)
+    model = get_fast_model()
 
     context = json.dumps(
         {
@@ -144,27 +140,23 @@ async def classify_event(event: Event) -> ClassificationResult:
     )
 
     try:
-        response = await client.aio.models.generate_content(
-            model=settings.gemini_model_fast,
-            contents=f"Classify this event:\n\n{context}",
-            config=types.GenerateContentConfig(
-                system_instruction=(
-                    CLASSIFIER_PROMPT
-                    or "Classify this event. Respond with valid JSON only."
-                ),
-                response_mime_type="application/json",
-                max_output_tokens=500,
-            ),
+        provider = get_provider()
+        response = await provider.generate(
+            model=model,
+            messages=[{"role": "user", "content": f"Classify this event:\n\n{context}"}],
+            max_tokens=500,
+            json_mode=True,
+            system=CLASSIFIER_PROMPT or "Classify this event. Respond with valid JSON only.",
         )
 
         response_text = response.text or ""
         if not response_text.strip():
             log.warning(
-                "empty_gemini_response",
+                "empty_llm_response",
                 event_id=str(event.id),
-                model=settings.gemini_model_fast,
+                model=model,
             )
-            raise ValueError("Gemini returned empty response")
+            raise ValueError("LLM returned empty response")
 
         data = _extract_json(response_text)
 

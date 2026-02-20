@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import re
 
-from google import genai
-from google.genai import types
-
 from agent1.common.logging import get_logger
-from agent1.common.settings import get_settings
-from agent1.intelligence.proposals import create_proposal, ProposalType
+from agent1.intelligence.proposals import ProposalType, create_proposal
+from agent1.reasoning.providers import get_provider, provider_available
+from agent1.reasoning.router import get_flash_model
 
 log = get_logger(__name__)
 
@@ -26,18 +24,17 @@ def _parse_rules_from_response(response: str) -> list[str]:
 
 
 async def _call_flash(prompt: str) -> str:
-    """Call Gemini Flash for quick analysis. Returns response text."""
-    settings = get_settings()
-    if not settings.gemini_api_key:
+    """Call flash-tier model for quick analysis. Returns response text."""
+    if not provider_available():
         return ""
 
-    client = genai.Client(api_key=settings.gemini_api_key)
-    response = await client.aio.models.generate_content(
-        model=settings.gemini_model_flash,
-        contents=prompt,
-        config=types.GenerateContentConfig(max_output_tokens=500),
+    provider = get_provider()
+    response = await provider.generate(
+        model=get_flash_model(),
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=500,
     )
-    return response.text.strip() if response.text else ""
+    return (response.text or "").strip()
 
 
 async def analyze_edit(

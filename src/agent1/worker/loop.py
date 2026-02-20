@@ -5,9 +5,6 @@ from __future__ import annotations
 import json
 import time
 
-from google import genai
-from google.genai import types
-
 from agent1.common.db import get_pool
 from agent1.common.logging import get_logger
 from agent1.common.models import ActionLog, ClassificationResult, Event, EventSource
@@ -241,7 +238,7 @@ async def process_event(event: Event) -> None:
 
     # Step 5.5: Post-action intelligence (NEW)
     try:
-        from agent1.intelligence.analytics_engine import track_event, check_correlations
+        from agent1.intelligence.analytics_engine import check_correlations, track_event
         await track_event(event.source.value, event.event_type, classification.category)
 
         correlations = await check_correlations(event.source.value, event.event_type)
@@ -322,12 +319,14 @@ async def _handle_teachable_rule(event: Event, start: float) -> None:
 async def _handle_chat_auto_response(
     event: Event, classification: ClassificationResult, start: float
 ) -> bool:
-    """Auto-respond to simple Chat questions using Gemini 2.0 Flash.
+    """Auto-respond to simple Chat questions using flash-tier model.
 
     Returns True if handled, False to fall through to full reasoning.
     """
-    settings = get_settings()
-    if not settings.gemini_api_key:
+    from agent1.reasoning.providers import get_provider, provider_available
+    from agent1.reasoning.router import get_flash_model
+
+    if not provider_available():
         return False
 
     text = event.payload.get("text", "").strip()
@@ -362,28 +361,27 @@ async def _handle_chat_auto_response(
     except Exception:
         pass
 
-    # Quick Gemini 2.0 Flash response (fastest/cheapest)
+    # Quick flash-tier response (fastest/cheapest)
     try:
-        client = genai.Client(api_key=settings.gemini_api_key)
-        response = await client.aio.models.generate_content(
-            model=settings.gemini_model_flash,
-            contents=text,
-            config=types.GenerateContentConfig(
-                system_instruction=(
-                    "You are The Agent1, GLAMIRA's operations assistant. "
-                    "You were built by the GLAMIRA tech team to help with operations. "
-                    "Stay in character at all times — you ARE The Agent1. "
-                    "Answer questions briefly and helpfully. "
-                    "If you don't know something specific about GLAMIRA operations, say so."
-                    + context_str
-                ),
-                max_output_tokens=500,
+        flash_model = get_flash_model()
+        provider = get_provider()
+        response = await provider.generate(
+            model=flash_model,
+            messages=[{"role": "user", "content": text}],
+            max_tokens=500,
+            system=(
+                "You are The Agent1, GLAMIRA's operations assistant. "
+                "You were built by the GLAMIRA tech team to help with operations. "
+                "Stay in character at all times — you ARE The Agent1. "
+                "Answer questions briefly and helpfully. "
+                "If you don't know something specific about GLAMIRA operations, say so."
+                + context_str
             ),
         )
 
-        answer = response.text.strip()
-        input_tokens = response.usage_metadata.prompt_token_count
-        output_tokens = response.usage_metadata.candidates_token_count
+        answer = (response.text or "").strip()
+        input_tokens = response.input_tokens
+        output_tokens = response.output_tokens
 
         # Post reply via Chat
         from agent1.tools.google_chat import GChatReplyAsAgentTool
@@ -398,7 +396,7 @@ async def _handle_chat_auto_response(
                 action_type="auto_response",
                 details={"question": text[:200], "answer": answer[:200]},
                 outcome="success",
-                model_used=settings.gemini_model_flash,
+                model_used=flash_model,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 latency_ms=elapsed_ms,
