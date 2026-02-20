@@ -100,7 +100,9 @@ class BaseAPIClient:
                 detail=str(exc),
             ) from exc
 
-    async def get(self, path: str, *, params: dict[str, Any] | None = None, unwrap: bool = True) -> Any:
+    async def get(
+        self, path: str, *, params: dict[str, Any] | None = None, unwrap: bool = True
+    ) -> Any:
         return await self.request("GET", path, params=params, unwrap=unwrap)
 
     async def post(self, path: str, *, json: Any | None = None, unwrap: bool = True) -> Any:

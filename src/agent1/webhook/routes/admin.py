@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
@@ -176,7 +175,7 @@ async def resume_queue():
 
 
 class DraftApproveBody(BaseModel):
-    edited_body: Optional[str] = None
+    edited_body: str | None = None
 
 
 @router.post("/drafts/{draft_id}/approve")
@@ -223,8 +222,9 @@ async def approve_draft(draft_id: int, body: DraftApproveBody = DraftApproveBody
 
             # Qualitative analysis (async, best effort)
             try:
-                from agent1.intelligence.feedback_intel import analyze_edit
                 import asyncio
+
+                from agent1.intelligence.feedback_intel import analyze_edit
                 asyncio.create_task(analyze_edit(
                     draft_id=draft_id,
                     original=draft["draft_body"],
@@ -274,8 +274,9 @@ async def reject_draft(draft_id: int):
                 draft_id,
             )
         if draft_row:
-            from agent1.intelligence.feedback_intel import analyze_rejection
             import asyncio
+
+            from agent1.intelligence.feedback_intel import analyze_rejection
             asyncio.create_task(analyze_rejection(
                 draft_id=draft_id,
                 draft_body=draft_row["draft_body"],
@@ -508,8 +509,8 @@ class InjectEventBody(BaseModel):
 async def inject_event(body: InjectEventBody):
     """Inject an event into the queue. Use source='dashboard' for dashboard chat."""
     from agent1.common.models import Event, EventSource, Priority
-    from agent1.queue.publisher import publish_event
     from agent1.common.settings import get_settings
+    from agent1.queue.publisher import publish_event
 
     settings = get_settings()
 
@@ -564,7 +565,7 @@ async def list_knowledge(limit: int = 50):
 
 
 @router.get("/actions")
-async def list_actions(limit: int = 50, event_id: Optional[str] = None):
+async def list_actions(limit: int = 50, event_id: str | None = None):
     """List recent agent actions (audit log). Optionally filter by event_id."""
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -678,13 +679,15 @@ async def store_knowledge_entry(body: StoreKnowledgeBody):
 @router.get("/integrations")
 async def list_integrations():
     """List configured integrations and their status."""
+    from agent1.integrations import FeedbacksClient, FreshdeskClient, StarInfinityClient
+
     settings = get_settings()
     return [
         {"id": "gmail", "name": "Gmail", "active": bool(settings.google_refresh_token)},
         {"id": "gchat", "name": "Google Chat", "active": bool(settings.gchat_space_alerts)},
-        {"id": "freshdesk", "name": "Freshdesk", "active": bool(settings.freshdesk_api_key)},
-        {"id": "starinfinity", "name": "StarInfinity", "active": bool(settings.starinfinity_api_key)},
-        {"id": "feedbacks", "name": "Feedbacks API", "active": bool(settings.feedbacks_api_key)},
+        {"id": "freshdesk", "name": "Freshdesk", "active": FreshdeskClient().available},
+        {"id": "starinfinity", "name": "StarInfinity", "active": StarInfinityClient().available},
+        {"id": "feedbacks", "name": "Feedbacks API", "active": FeedbacksClient().available},
         {"id": "voyage", "name": "Voyage AI", "active": bool(settings.voyage_api_key)},
         {"id": "langfuse", "name": "LangFuse", "active": bool(settings.langfuse_public_key)},
         {"id": "mcp", "name": "MCP Tools", "active": settings.dynamic_tools_enabled},
@@ -695,7 +698,7 @@ async def list_integrations():
 
 
 @router.get("/proposals")
-async def list_proposals(status: str = "pending", type: Optional[str] = None, limit: int = 20):
+async def list_proposals(status: str = "pending", type: str | None = None, limit: int = 20):
     """List proposals by status, optionally filtered by type."""
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -744,8 +747,8 @@ async def get_proposal_detail(proposal_id: str):
 
 
 class ProposalApproveBody(BaseModel):
-    notes: Optional[str] = None
-    edited_description: Optional[str] = None
+    notes: str | None = None
+    edited_description: str | None = None
 
 
 @router.post("/proposals/{proposal_id}/approve")
@@ -763,7 +766,7 @@ async def approve_proposal_endpoint(proposal_id: str, body: ProposalApproveBody 
 
 
 class ProposalRejectBody(BaseModel):
-    reason: Optional[str] = None
+    reason: str | None = None
 
 
 @router.post("/proposals/{proposal_id}/reject")
@@ -780,7 +783,7 @@ async def reject_proposal_endpoint(proposal_id: str, body: ProposalRejectBody = 
 
 
 @router.get("/solutions")
-async def list_solutions(type: Optional[str] = None):
+async def list_solutions(type: str | None = None):
     """List active solutions (tools, automations, scripts)."""
     from agent1.intelligence.solutions.factory import get_active_solutions
     return await get_active_solutions(type)

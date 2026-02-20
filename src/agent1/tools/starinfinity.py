@@ -10,12 +10,16 @@ from agent1.tools.base import BaseTool
 
 log = get_logger(__name__)
 
-_NOT_CONFIGURED = {"error": "StarInfinity not configured — set starinfinity_base_url and starinfinity_api_key"}
+_NOT_CONFIGURED = {
+    "error": "StarInfinity not configured — set starinfinity_base_url and starinfinity_api_key"
+}
 
 
 def _error(exc: IntegrationError) -> dict[str, str]:
     """Convert an IntegrationError to a tool-friendly error dict."""
-    return {"error": f"StarInfinity API error: {exc.status_code}" if exc.status_code else f"StarInfinity network error: {exc.detail}"}
+    if exc.status_code:
+        return {"error": f"StarInfinity API error: {exc.status_code}"}
+    return {"error": f"StarInfinity network error: {exc.detail}"}
 
 
 class StarInfinityListBoardsTool(BaseTool):
