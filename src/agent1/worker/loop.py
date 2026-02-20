@@ -363,7 +363,7 @@ async def _handle_chat_auto_response(
 
     # Quick flash-tier response (fastest/cheapest)
     try:
-        flash_model = get_flash_model()
+        flash_model = await get_flash_model()
         provider = await get_provider()
         response = await provider.generate(
             model=flash_model,

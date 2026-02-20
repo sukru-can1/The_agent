@@ -39,7 +39,7 @@ async def reason_and_act(
         log.warning("no_api_key_skipping_reasoning")
         return {"model_used": "none", "input_tokens": 0, "output_tokens": 0, "result": "skipped"}
 
-    model = select_model(classification, event)
+    model = await select_model(classification, event)
     provider = await get_provider()
     tool_defs = get_tool_definitions()
 

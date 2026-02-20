@@ -210,7 +210,7 @@ class TestClassifier:
                 new_callable=AsyncMock,
                 return_value=mock_provider,
             ),
-            patch("agent1.reasoning.classifier.get_fast_model", return_value="test-model"),
+            patch("agent1.reasoning.classifier.get_fast_model", new_callable=AsyncMock, return_value="test-model"),
         ):
             result = await classify_event(sample_email_event)
 
@@ -249,7 +249,7 @@ class TestClassifier:
                 new_callable=AsyncMock,
                 return_value=mock_provider,
             ),
-            patch("agent1.reasoning.classifier.get_fast_model", return_value="test-model"),
+            patch("agent1.reasoning.classifier.get_fast_model", new_callable=AsyncMock, return_value="test-model"),
         ):
             result = await classify_event(sample_email_event)
 
@@ -281,7 +281,7 @@ class TestClassifier:
                 new_callable=AsyncMock,
                 return_value=mock_provider,
             ),
-            patch("agent1.reasoning.classifier.get_fast_model", return_value="test-model"),
+            patch("agent1.reasoning.classifier.get_fast_model", new_callable=AsyncMock, return_value="test-model"),
         ):
             result = await classify_event(sample_email_event)
 
@@ -303,7 +303,7 @@ class TestClassifier:
                 new_callable=AsyncMock,
                 return_value=mock_provider,
             ),
-            patch("agent1.reasoning.classifier.get_fast_model", return_value="test-model"),
+            patch("agent1.reasoning.classifier.get_fast_model", new_callable=AsyncMock, return_value="test-model"),
         ):
             result = await classify_event(sample_email_event)
 

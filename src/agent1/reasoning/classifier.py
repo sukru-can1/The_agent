@@ -128,7 +128,7 @@ async def classify_event(event: Event) -> ClassificationResult:
             confidence=0.5,
         )
 
-    model = get_fast_model()
+    model = await get_fast_model()
 
     context = json.dumps(
         {

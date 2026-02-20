@@ -29,7 +29,7 @@ async def create_plan(event: Event, classification: ClassificationResult) -> dic
     """
     from agent1.reasoning.router import select_model
 
-    model = select_model(classification)
+    model = await select_model(classification)
 
     # Simple events get a fast local plan (no API call)
     if classification.complexity.value == "simple":
@@ -52,7 +52,7 @@ async def create_plan(event: Event, classification: ClassificationResult) -> dic
     try:
         from agent1.reasoning.classifier import _extract_json
 
-        fast_model = get_fast_model()
+        fast_model = await get_fast_model()
         provider = await get_provider()
         response = await provider.generate(
             model=fast_model,

@@ -30,7 +30,7 @@ async def _call_flash(prompt: str) -> str:
 
     provider = await get_provider()
     response = await provider.generate(
-        model=get_flash_model(),
+        model=await get_flash_model(),
         messages=[{"role": "user", "content": prompt}],
         max_tokens=500,
     )

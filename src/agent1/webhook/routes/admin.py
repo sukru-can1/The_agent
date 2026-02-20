@@ -688,8 +688,8 @@ async def get_llm_provider():
         "provider": name,
         "available": await provider_available(),
         "models": {
-            "flash": get_flash_model(),
-            "fast": get_fast_model(),
+            "flash": await get_flash_model(),
+            "fast": await get_fast_model(),
             "default": getattr(settings, f"{name}_model_default", ""),
             "pro": getattr(settings, f"{name}_model_pro", ""),
         },
