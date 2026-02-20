@@ -53,6 +53,8 @@ async def create_plan(event: Event, classification: ClassificationResult) -> dic
         return _fallback_plan(event, classification, model)
 
     try:
+        from agent1.reasoning.classifier import _extract_json
+
         client = genai.Client(api_key=settings.gemini_api_key)
         response = await client.aio.models.generate_content(
             model=settings.gemini_model_fast,
@@ -68,21 +70,29 @@ async def create_plan(event: Event, classification: ClassificationResult) -> dic
             ),
             config=types.GenerateContentConfig(
                 system_instruction=PLANNER_PROMPT,
+                response_mime_type="application/json",
                 max_output_tokens=500,
             ),
         )
 
-        plan_text = response.text.strip()
-        # Try to parse as JSON
-        plan = json.loads(plan_text)
+        plan = _extract_json(response.text)
         plan["model"] = model
         plan["event_type"] = event.event_type
         plan["source"] = event.source.value
-        log.info("plan_created", event_id=str(event.id), complexity="complex", model=settings.gemini_model_fast)
+        log.info(
+            "plan_created",
+            event_id=str(event.id),
+            complexity="complex",
+            model=settings.gemini_model_fast,
+        )
         return plan
 
-    except (json.JSONDecodeError, Exception) as exc:
-        log.warning("plan_creation_failed", error=str(exc), event_id=str(event.id))
+    except Exception as exc:
+        log.warning(
+            "plan_creation_failed",
+            error=str(exc),
+            event_id=str(event.id),
+        )
         return _fallback_plan(event, classification, model)
 
 

@@ -1,4 +1,4 @@
-"""Test event classifier."""
+"""Tests for event classifier and JSON extraction."""
 
 from __future__ import annotations
 
@@ -7,56 +7,157 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agent1.common.models import Complexity, Event, EventSource, Priority
-from agent1.reasoning.classifier import classify_event
+from agent1.common.models import Complexity, Priority
+from agent1.reasoning.classifier import _extract_json, _fix_truncated_json, classify_event
+
+
+# ===========================================================================
+# _extract_json tests
+# ===========================================================================
+
+
+class TestExtractJson:
+    def test_clean_json(self):
+        data = {"category": "spam", "urgency": 9}
+        assert _extract_json(json.dumps(data)) == data
+
+    def test_json_with_whitespace(self):
+        assert _extract_json('  \n {"a": 1} \n  ') == {"a": 1}
+
+    def test_markdown_fence_json(self):
+        text = '```json\n{"category": "spam", "urgency": 9}\n```'
+        assert _extract_json(text) == {"category": "spam", "urgency": 9}
+
+    def test_markdown_fence_no_lang(self):
+        text = '```\n{"category": "spam"}\n```'
+        assert _extract_json(text) == {"category": "spam"}
+
+    def test_leading_prose(self):
+        text = 'Here is the classification:\n{"category": "spam", "urgency": 9}'
+        result = _extract_json(text)
+        assert result["category"] == "spam"
+
+    def test_trailing_prose(self):
+        text = '{"category": "spam", "urgency": 9}\n\nLet me know if you need more.'
+        result = _extract_json(text)
+        assert result["category"] == "spam"
+
+    def test_prose_both_sides(self):
+        text = 'Sure!\n```json\n{"x": 1}\n```\nHope that helps!'
+        assert _extract_json(text) == {"x": 1}
+
+    def test_truncated_string(self):
+        """Gemini cuts off mid-string value."""
+        text = '{"category": "delivery_issue", "urgency": 5, "reason": "The customer'
+        result = _extract_json(text)
+        assert result["category"] == "delivery_issue"
+        assert result["urgency"] == 5
+
+    def test_truncated_missing_closing_brace(self):
+        text = '{"category": "spam", "urgency": 9'
+        result = _extract_json(text)
+        assert result["category"] == "spam"
+
+    def test_trailing_comma(self):
+        """Gemini sometimes leaves a trailing comma."""
+        text = '{"category": "spam", "urgency": 9,}'
+        # _fix_truncated_json strips trailing comma before closing
+        result = _extract_json(text)
+        assert result["category"] == "spam"
+
+    def test_raises_on_garbage(self):
+        with pytest.raises(ValueError, match="No valid JSON"):
+            _extract_json("This is not JSON at all")
+
+    def test_raises_on_empty(self):
+        with pytest.raises(ValueError, match="No valid JSON"):
+            _extract_json("")
+
+
+# ===========================================================================
+# _fix_truncated_json tests
+# ===========================================================================
+
+
+class TestFixTruncatedJson:
+    def test_closes_unterminated_string(self):
+        result = _fix_truncated_json('{"a": "hello')
+        assert result.endswith('"}"') or '"' in result
+
+    def test_closes_open_braces(self):
+        result = _fix_truncated_json('{"a": {"b": 1}')
+        assert result.count("{") == result.count("}")
+
+    def test_closes_open_brackets(self):
+        result = _fix_truncated_json('{"a": [1, 2')
+        assert result.count("[") == result.count("]")
+
+    def test_removes_trailing_comma(self):
+        result = _fix_truncated_json('{"a": 1, "b": 2,')
+        assert not result.rstrip("}]").endswith(",")
+
+
+# ===========================================================================
+# classify_event tests
+# ===========================================================================
 
 
 def _mock_settings(**overrides):
-    settings = MagicMock()
-    settings.anthropic_api_key = overrides.get("anthropic_api_key", "")
-    settings.claude_model_haiku = overrides.get("claude_model_haiku", "claude-haiku-4-5-20251001")
-    return settings
+    defaults = {
+        "gemini_api_key": "",
+        "gemini_model_fast": "gemini-2.5-flash",
+    }
+    defaults.update(overrides)
+    return MagicMock(**defaults)
+
+
+def _mock_gemini_response(text: str) -> MagicMock:
+    response = MagicMock()
+    response.text = text
+    return response
 
 
 class TestClassifier:
-    @pytest.mark.asyncio
-    async def test_fallback_classification_no_api_key(self, sample_email_event):
-        """Without API key, classifier returns fallback result."""
-        with patch("agent1.reasoning.classifier.get_settings", return_value=_mock_settings()):
+    async def test_fallback_when_no_api_key(self, sample_email_event):
+        with patch(
+            "agent1.reasoning.classifier.get_settings",
+            return_value=_mock_settings(),
+        ):
             result = await classify_event(sample_email_event)
         assert result.category == sample_email_event.event_type
         assert result.urgency == sample_email_event.priority
         assert result.complexity == Complexity.MODERATE
         assert result.confidence == 0.5
 
-    @pytest.mark.asyncio
     async def test_successful_classification(self, sample_email_event):
-        """With API key, classifier parses Claude response."""
-        mock_response = MagicMock()
-        mock_response.content = [
-            MagicMock(
-                text=json.dumps(
-                    {
-                        "category": "delivery_issue",
-                        "urgency": 5,
-                        "complexity": "simple",
-                        "involves_vip": False,
-                        "involves_financial": False,
-                        "needs_response": True,
-                        "confidence": 0.92,
-                        "detected_language": "en",
-                        "is_teachable_rule": False,
-                    }
-                )
-            )
-        ]
+        json_data = {
+            "category": "delivery_issue",
+            "urgency": 5,
+            "complexity": "simple",
+            "involves_vip": False,
+            "involves_financial": False,
+            "needs_response": True,
+            "confidence": 0.92,
+            "detected_language": "en",
+            "is_teachable_rule": False,
+        }
 
-        mock_client = AsyncMock()
-        mock_client.messages.create = AsyncMock(return_value=mock_response)
+        mock_aio = AsyncMock()
+        mock_aio.models.generate_content = AsyncMock(
+            return_value=_mock_gemini_response(json.dumps(json_data))
+        )
+        mock_client = MagicMock()
+        mock_client.aio = mock_aio
 
         with (
-            patch("agent1.reasoning.classifier.get_settings", return_value=_mock_settings(anthropic_api_key="sk-test")),
-            patch("anthropic.AsyncAnthropic", return_value=mock_client),
+            patch(
+                "agent1.reasoning.classifier.get_settings",
+                return_value=_mock_settings(gemini_api_key="key"),
+            ),
+            patch(
+                "agent1.reasoning.classifier.genai.Client",
+                return_value=mock_client,
+            ),
         ):
             result = await classify_event(sample_email_event)
 
@@ -66,24 +167,7 @@ class TestClassifier:
         assert result.confidence == 0.92
         assert result.detected_language == "en"
 
-    @pytest.mark.asyncio
-    async def test_classification_handles_api_error(self, sample_email_event):
-        """When Claude API fails, classifier returns safe fallback."""
-        mock_client = AsyncMock()
-        mock_client.messages.create = AsyncMock(side_effect=Exception("API error"))
-
-        with (
-            patch("agent1.reasoning.classifier.get_settings", return_value=_mock_settings(anthropic_api_key="sk-test")),
-            patch("anthropic.AsyncAnthropic", return_value=mock_client),
-        ):
-            result = await classify_event(sample_email_event)
-
-        assert result.category == sample_email_event.event_type
-        assert result.confidence == 0.0
-
-    @pytest.mark.asyncio
-    async def test_classification_handles_markdown_json(self, sample_email_event):
-        """Classifier strips markdown code fences from JSON."""
+    async def test_handles_markdown_wrapped_json(self, sample_email_event):
         json_data = {
             "category": "spam",
             "urgency": 9,
@@ -95,17 +179,81 @@ class TestClassifier:
             "detected_language": "en",
             "is_teachable_rule": False,
         }
-        mock_response = MagicMock()
-        mock_response.content = [MagicMock(text=f"```json\n{json.dumps(json_data)}\n```")]
 
-        mock_client = AsyncMock()
-        mock_client.messages.create = AsyncMock(return_value=mock_response)
+        mock_aio = AsyncMock()
+        mock_aio.models.generate_content = AsyncMock(
+            return_value=_mock_gemini_response(
+                f"```json\n{json.dumps(json_data)}\n```"
+            )
+        )
+        mock_client = MagicMock()
+        mock_client.aio = mock_aio
 
         with (
-            patch("agent1.reasoning.classifier.get_settings", return_value=_mock_settings(anthropic_api_key="sk-test")),
-            patch("anthropic.AsyncAnthropic", return_value=mock_client),
+            patch(
+                "agent1.reasoning.classifier.get_settings",
+                return_value=_mock_settings(gemini_api_key="key"),
+            ),
+            patch(
+                "agent1.reasoning.classifier.genai.Client",
+                return_value=mock_client,
+            ),
         ):
             result = await classify_event(sample_email_event)
 
         assert result.category == "spam"
         assert result.urgency == Priority.BACKGROUND
+
+    async def test_handles_truncated_json(self, sample_email_event):
+        """When Gemini truncates output, classifier recovers what it can."""
+        truncated = (
+            '{"category": "customer_complaint", "urgency": 3, '
+            '"complexity": "moderate", "involves_vip": false, '
+            '"involves_financial": false, "needs_response": true, '
+            '"confidence": 0.85, "detected_language": "en'
+        )
+
+        mock_aio = AsyncMock()
+        mock_aio.models.generate_content = AsyncMock(
+            return_value=_mock_gemini_response(truncated)
+        )
+        mock_client = MagicMock()
+        mock_client.aio = mock_aio
+
+        with (
+            patch(
+                "agent1.reasoning.classifier.get_settings",
+                return_value=_mock_settings(gemini_api_key="key"),
+            ),
+            patch(
+                "agent1.reasoning.classifier.genai.Client",
+                return_value=mock_client,
+            ),
+        ):
+            result = await classify_event(sample_email_event)
+
+        assert result.category == "customer_complaint"
+        assert result.urgency == Priority.HIGH
+
+    async def test_handles_api_error(self, sample_email_event):
+        mock_aio = AsyncMock()
+        mock_aio.models.generate_content = AsyncMock(
+            side_effect=Exception("API error")
+        )
+        mock_client = MagicMock()
+        mock_client.aio = mock_aio
+
+        with (
+            patch(
+                "agent1.reasoning.classifier.get_settings",
+                return_value=_mock_settings(gemini_api_key="key"),
+            ),
+            patch(
+                "agent1.reasoning.classifier.genai.Client",
+                return_value=mock_client,
+            ),
+        ):
+            result = await classify_event(sample_email_event)
+
+        assert result.category == sample_email_event.event_type
+        assert result.confidence == 0.0
