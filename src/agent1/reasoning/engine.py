@@ -8,12 +8,17 @@ from pathlib import Path
 from google import genai
 from google.genai import types
 
+from typing import TYPE_CHECKING
+
 from agent1.common.logging import get_logger
 from agent1.common.models import ClassificationResult, Event
 from agent1.common.observability import trace_operation
 from agent1.common.settings import get_settings
 from agent1.reasoning.router import select_model
 from agent1.tools.registry import get_tool_definitions, execute_tool
+
+if TYPE_CHECKING:
+    from agent1.intelligence.context_engine import EnrichedContext
 
 log = get_logger(__name__)
 
@@ -62,6 +67,7 @@ async def reason_and_act(
     event: Event,
     classification: ClassificationResult,
     plan: dict | None = None,
+    enriched_context: "EnrichedContext | None" = None,
 ) -> dict:
     """Send event to Gemini with tools, execute function calls in a loop until done.
 
@@ -99,26 +105,32 @@ async def reason_and_act(
             f"\n## Plan\n- Actions: {', '.join(plan.get('intended_actions', []))}\n- Reasoning: {plan.get('reasoning', '')}"
         )
 
-    # Inject learned knowledge patterns
-    try:
-        from agent1.common.db import get_pool as _get_pool
-
-        pool = await _get_pool()
-        async with pool.acquire() as conn:
-            knowledge_rows = await conn.fetch(
-                """
-                SELECT content FROM knowledge
-                WHERE active = true
-                  AND category IN ('taught_rule', 'edit_pattern')
-                ORDER BY created_at DESC
-                LIMIT 10
-                """
-            )
-            if knowledge_rows:
-                rules = "\n".join(f"- {r['content']}" for r in knowledge_rows)
-                context_parts.append(f"\n## Learned Rules\n{rules}")
-    except Exception:
-        pass
+    # Inject enriched context (replaces old "last 10 taught rules" approach)
+    if enriched_context:
+        from agent1.intelligence.context_engine import _format_context
+        formatted_ctx = _format_context(enriched_context)
+        if formatted_ctx:
+            context_parts.append(f"\n{formatted_ctx}")
+    else:
+        # Fallback: inject recent taught rules (backwards compat)
+        try:
+            from agent1.common.db import get_pool as _get_pool
+            pool = await _get_pool()
+            async with pool.acquire() as conn:
+                knowledge_rows = await conn.fetch(
+                    """
+                    SELECT content FROM knowledge
+                    WHERE active = true
+                      AND category IN ('taught_rule', 'edit_pattern', 'approved_rule')
+                    ORDER BY created_at DESC
+                    LIMIT 10
+                    """
+                )
+                if knowledge_rows:
+                    rules = "\n".join(f"- {r['content']}" for r in knowledge_rows)
+                    context_parts.append(f"\n## Learned Rules\n{rules}")
+        except Exception:
+            pass
 
     context = "\n".join(context_parts)
 
