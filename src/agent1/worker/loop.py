@@ -466,20 +466,13 @@ async def _handle_summary_event(event: Event, start: float) -> None:
     # Check feedbacks via API if available
     complaints_24h = 0
     try:
-        if settings.feedbacks_api_key:
-            import httpx
+        from agent1.integrations import FeedbacksClient
 
-            async with httpx.AsyncClient(
-                base_url=settings.feedbacks_api_url,
-                headers={"Authorization": f"Bearer {settings.feedbacks_api_key}"},
-                timeout=15.0,
-            ) as fc:
-                resp = await fc.get("/tasks")
-                resp.raise_for_status()
-                data = resp.json()
-                if isinstance(data, dict) and "data" in data:
-                    data = data["data"]
-                complaints_24h = data.get("complaints", {}).get("new", 0)
+        fb = FeedbacksClient()
+        if fb.available:
+            async with fb:
+                tasks_data = await fb.get_tasks()
+            complaints_24h = tasks_data.get("complaints", {}).get("new", 0)
     except Exception:
         pass
 

@@ -88,24 +88,14 @@ async def _detect_ticket_spikes() -> None:
 async def _detect_csat_trends() -> None:
     """Check feedbacks API for CSAT anomalies via GET /insights."""
     try:
-        from agent1.common.settings import get_settings
+        from agent1.integrations import FeedbacksClient
 
-        settings = get_settings()
-        if not settings.feedbacks_api_key:
+        client = FeedbacksClient()
+        if not client.available:
             return
 
-        import httpx
-
-        async with httpx.AsyncClient(
-            base_url=settings.feedbacks_api_url,
-            headers={"Authorization": f"Bearer {settings.feedbacks_api_key}"},
-            timeout=30.0,
-        ) as client:
-            resp = await client.get("/insights", params={"days": 1})
-            resp.raise_for_status()
-            data = resp.json()
-            if isinstance(data, dict) and "data" in data:
-                data = data["data"]
+        async with client:
+            data = await client.get_insights(days=1)
 
         # Look for alertDetails with critical or warning severity
         alert_details = data.get("alertDetails", [])

@@ -5,34 +5,13 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-import httpx
-
 from agent1.common.logging import get_logger
 from agent1.common.models import Event, EventSource, Priority
-from agent1.common.settings import get_settings
+from agent1.integrations import FeedbacksClient, IntegrationError
 from agent1.queue.dedup import is_duplicate, mark_processed
 from agent1.queue.publisher import publish_event
 
 log = get_logger(__name__)
-
-
-def _get_client() -> httpx.AsyncClient | None:
-    """Create an httpx client for the Feedbacks API."""
-    settings = get_settings()
-    if not settings.feedbacks_api_key:
-        return None
-    return httpx.AsyncClient(
-        base_url=settings.feedbacks_api_url,
-        headers={"Authorization": f"Bearer {settings.feedbacks_api_key}"},
-        timeout=30.0,
-    )
-
-
-def _unwrap(data: dict) -> dict:
-    """Strip the standard API envelope if present."""
-    if isinstance(data, dict) and "data" in data:
-        return data["data"]
-    return data
 
 
 async def poll_feedbacks() -> None:
@@ -42,8 +21,8 @@ async def poll_feedbacks() -> None:
     - Low-star Trustpilot reviews (stars <= 2, status = new) -> HIGH priority
     - Trustpilot review spikes (3+ new reviews) -> CRITICAL
     """
-    client = _get_client()
-    if client is None:
+    client = FeedbacksClient()
+    if not client.available:
         log.debug("feedbacks_poll_skipped", reason="no feedbacks API key configured")
         return
 
@@ -54,17 +33,17 @@ async def poll_feedbacks() -> None:
             await _poll_new_complaints(client)
             await _poll_trustpilot_reviews(client)
             await _check_trustpilot_spikes(client)
+    except IntegrationError as exc:
+        log.warning("feedbacks_poll_error", error=str(exc))
     except Exception as exc:
         log.warning("feedbacks_poll_error", error=str(exc))
 
     log.debug("feedbacks_poll_completed")
 
 
-async def _poll_new_complaints(client: httpx.AsyncClient) -> None:
+async def _poll_new_complaints(client: FeedbacksClient) -> None:
     """Check for new complaint tasks via GET /tasks."""
-    resp = await client.get("/tasks")
-    resp.raise_for_status()
-    data = _unwrap(resp.json())
+    data = await client.get_tasks()
 
     complaints = data.get("complaints", {})
     new_count = complaints.get("new", 0)
@@ -95,11 +74,9 @@ async def _poll_new_complaints(client: httpx.AsyncClient) -> None:
     log.info("feedbacks_complaints_event", new_count=new_count)
 
 
-async def _poll_trustpilot_reviews(client: httpx.AsyncClient) -> None:
+async def _poll_trustpilot_reviews(client: FeedbacksClient) -> None:
     """Check for new low-star Trustpilot reviews via GET /trustpilot/reviews."""
-    resp = await client.get("/trustpilot/reviews", params={"status": "new", "limit": 50})
-    resp.raise_for_status()
-    data = _unwrap(resp.json())
+    data = await client.get_trustpilot_reviews(status="new", limit=50)
 
     reviews = data.get("reviews", [])
 
@@ -135,11 +112,9 @@ async def _poll_trustpilot_reviews(client: httpx.AsyncClient) -> None:
         log.info("feedbacks_trustpilot_event", review_id=review_id, stars=stars)
 
 
-async def _check_trustpilot_spikes(client: httpx.AsyncClient) -> None:
+async def _check_trustpilot_spikes(client: FeedbacksClient) -> None:
     """Detect Trustpilot review spikes: 3+ new reviews -> CRITICAL."""
-    resp = await client.get("/trustpilot")
-    resp.raise_for_status()
-    data = _unwrap(resp.json())
+    data = await client.get_trustpilot_summary()
 
     by_status = data.get("byStatus", {})
     new_count = by_status.get("new", 0)

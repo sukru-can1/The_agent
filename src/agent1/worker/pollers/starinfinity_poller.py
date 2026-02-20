@@ -4,11 +4,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-import httpx
-
 from agent1.common.logging import get_logger
 from agent1.common.models import Event, EventSource, Priority
-from agent1.common.settings import get_settings
+from agent1.integrations import IntegrationError, StarInfinityClient
 from agent1.queue.dedup import is_duplicate, mark_processed
 from agent1.queue.publisher import publish_event
 
@@ -17,26 +15,19 @@ log = get_logger(__name__)
 
 async def poll_starinfinity() -> None:
     """Check StarInfinity for overdue tasks and publish events for each."""
-    settings = get_settings()
-
-    if not settings.starinfinity_base_url or not settings.starinfinity_api_key:
+    client = StarInfinityClient()
+    if not client.available:
         log.debug("starinfinity_poll_skipped", reason="not_configured")
         return
 
     log.debug("starinfinity_poll_started")
 
     try:
-        async with httpx.AsyncClient(
-            base_url=settings.starinfinity_base_url,
-            headers={"Authorization": f"Bearer {settings.starinfinity_api_key}"},
-            timeout=30.0,
-        ) as client:
+        async with client:
             # First, list all boards in the workspace
-            boards_resp = await client.get("/boards")
-            boards_resp.raise_for_status()
-            boards_data = boards_resp.json()
-
-            boards = boards_data if isinstance(boards_data, list) else boards_data.get("data", [])
+            boards = await client.list_boards()
+            if not isinstance(boards, list):
+                boards = []
 
             if not boards:
                 log.debug("starinfinity_poll_no_boards")
@@ -52,11 +43,9 @@ async def poll_starinfinity() -> None:
                     continue
 
                 try:
-                    items_resp = await client.get(f"/boards/{board_id}/items", params={"limit": 100})
-                    items_resp.raise_for_status()
-                    items_data = items_resp.json()
-
-                    items = items_data if isinstance(items_data, list) else items_data.get("data", [])
+                    items = await client.get_items(board_id, limit=100)
+                    if not isinstance(items, list):
+                        items = []
 
                     for item in items:
                         # Check for due date in item values/attributes
@@ -67,19 +56,12 @@ async def poll_starinfinity() -> None:
                             item["_due_date"] = due_date.isoformat()
                             all_overdue.append(item)
 
-                except httpx.HTTPStatusError:
+                except IntegrationError:
                     log.debug("starinfinity_board_items_error", board_id=board_id)
                     continue
 
-    except httpx.HTTPStatusError as exc:
-        log.warning(
-            "starinfinity_poll_api_error",
-            status_code=exc.response.status_code,
-            detail=exc.response.text[:500],
-        )
-        return
-    except httpx.HTTPError as exc:
-        log.warning("starinfinity_poll_network_error", error=str(exc))
+    except IntegrationError as exc:
+        log.warning("starinfinity_poll_error", detail=str(exc))
         return
 
     published = 0

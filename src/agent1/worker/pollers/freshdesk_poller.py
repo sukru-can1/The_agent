@@ -4,11 +4,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-import httpx
-
 from agent1.common.logging import get_logger
 from agent1.common.models import Event, EventSource, Priority
-from agent1.common.settings import get_settings
+from agent1.integrations import FreshdeskClient, IntegrationError
 from agent1.queue.dedup import is_duplicate, mark_processed
 from agent1.queue.publisher import publish_event
 
@@ -30,9 +28,8 @@ async def poll_freshdesk() -> None:
     """Check Freshdesk for new or updated tickets and publish events."""
     log.debug("freshdesk_poll_started")
 
-    settings = get_settings()
-
-    if not settings.freshdesk_api_key:
+    client = FreshdeskClient()
+    if not client.available:
         log.debug("freshdesk_poll_skipped", reason="api_key_not_configured")
         return
 
@@ -41,31 +38,14 @@ async def poll_freshdesk() -> None:
     updated_since = since.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     try:
-        async with httpx.AsyncClient(
-            base_url=f"https://{settings.freshdesk_domain}/api/v2",
-            auth=(settings.freshdesk_api_key, "X"),
-            timeout=30.0,
-        ) as client:
-            resp = await client.get(
-                "/tickets",
-                params={
-                    "updated_since": updated_since,
-                    "order_by": "updated_at",
-                    "order_type": "desc",
-                },
+        async with client:
+            tickets = await client.get_tickets(
+                updated_since=updated_since,
+                order_by="updated_at",
+                order_type="desc",
             )
-            resp.raise_for_status()
-            tickets = resp.json()
-
-    except httpx.HTTPStatusError as exc:
-        log.warning(
-            "freshdesk_poll_api_error",
-            status_code=exc.response.status_code,
-            detail=exc.response.text[:500],
-        )
-        return
-    except httpx.HTTPError as exc:
-        log.warning("freshdesk_poll_network_error", error=str(exc))
+    except IntegrationError as exc:
+        log.warning("freshdesk_poll_error", detail=str(exc))
         return
 
     published = 0

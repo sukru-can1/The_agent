@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from agent1.integrations._base import IntegrationError
+
 
 def _mock_response(json_data, status_code=200):
     resp = MagicMock(spec=httpx.Response)
@@ -30,9 +32,14 @@ def _patch_settings(**overrides):
     }
     defaults.update(overrides)
     return patch(
-        "agent1.worker.pollers.feedbacks_poller.get_settings",
+        "agent1.integrations.feedbacks.get_settings",
         return_value=MagicMock(**defaults),
     )
+
+
+def _patch_client(mock_client):
+    """Patch httpx.AsyncClient at the integration layer."""
+    return patch("agent1.integrations._base.httpx.AsyncClient", return_value=mock_client)
 
 
 class TestPollFeedbacksSkips:
@@ -47,12 +54,9 @@ class TestPollFeedbacksSkips:
         from agent1.worker.pollers.feedbacks_poller import poll_feedbacks
 
         mock_client = _make_mock_client()
-        mock_client.get.side_effect = httpx.ConnectError("Connection refused")
+        mock_client.request.side_effect = httpx.ConnectError("Connection refused")
 
-        with (
-            _patch_settings(),
-            patch("agent1.worker.pollers.feedbacks_poller.httpx.AsyncClient", return_value=mock_client),
-        ):
+        with _patch_settings(), _patch_client(mock_client):
             # Should not raise
             await poll_feedbacks()
 
@@ -61,12 +65,11 @@ class TestPollNewComplaints:
     async def test_publishes_event_when_new_complaints(self):
         from agent1.worker.pollers.feedbacks_poller import _poll_new_complaints
 
-        mock_client = _make_mock_client()
-        mock_client.get.return_value = _mock_response({
-            "data": {
-                "complaints": {"new": 3, "in_progress": 1, "done": 10},
-            },
-        })
+        # Create a mock FeedbacksClient (already inside async with)
+        mock_client = AsyncMock()
+        mock_client.get_tasks.return_value = {
+            "complaints": {"new": 3, "in_progress": 1, "done": 10},
+        }
 
         mock_publish = AsyncMock()
         mock_is_dup = AsyncMock(return_value=False)
@@ -95,32 +98,30 @@ class TestPollTrustpilotReviews:
     async def test_publishes_events_for_low_star_reviews(self):
         from agent1.worker.pollers.feedbacks_poller import _poll_trustpilot_reviews
 
-        mock_client = _make_mock_client()
-        mock_client.get.return_value = _mock_response({
-            "data": {
-                "reviews": [
-                    {
-                        "id": "r1",
-                        "trustpilotId": "tp1",
-                        "title": "Terrible",
-                        "stars": 1,
-                        "reviewerName": "John",
-                        "reviewerCountry": "DE",
-                        "isDefendable": True,
-                    },
-                    {
-                        "id": "r2",
-                        "trustpilotId": "tp2",
-                        "title": "Bad",
-                        "stars": 2,
-                        "reviewerName": "Jane",
-                        "reviewerCountry": "US",
-                        "isDefendable": False,
-                    },
-                ],
-                "pagination": {"total": 2},
-            },
-        })
+        mock_client = AsyncMock()
+        mock_client.get_trustpilot_reviews.return_value = {
+            "reviews": [
+                {
+                    "id": "r1",
+                    "trustpilotId": "tp1",
+                    "title": "Terrible",
+                    "stars": 1,
+                    "reviewerName": "John",
+                    "reviewerCountry": "DE",
+                    "isDefendable": True,
+                },
+                {
+                    "id": "r2",
+                    "trustpilotId": "tp2",
+                    "title": "Bad",
+                    "stars": 2,
+                    "reviewerName": "Jane",
+                    "reviewerCountry": "US",
+                    "isDefendable": False,
+                },
+            ],
+            "pagination": {"total": 2},
+        }
 
         mock_publish = AsyncMock()
         mock_is_dup = AsyncMock(return_value=False)
@@ -141,15 +142,13 @@ class TestPollTrustpilotReviews:
     async def test_deduplicates_reviews(self):
         from agent1.worker.pollers.feedbacks_poller import _poll_trustpilot_reviews
 
-        mock_client = _make_mock_client()
-        mock_client.get.return_value = _mock_response({
-            "data": {
-                "reviews": [
-                    {"id": "r1", "trustpilotId": "tp1", "title": "Bad", "stars": 1,
-                     "reviewerName": "John", "reviewerCountry": "DE", "isDefendable": False},
-                ],
-            },
-        })
+        mock_client = AsyncMock()
+        mock_client.get_trustpilot_reviews.return_value = {
+            "reviews": [
+                {"id": "r1", "trustpilotId": "tp1", "title": "Bad", "stars": 1,
+                 "reviewerName": "John", "reviewerCountry": "DE", "isDefendable": False},
+            ],
+        }
 
         mock_publish = AsyncMock()
         mock_is_dup = AsyncMock(return_value=True)  # Already seen
@@ -168,13 +167,11 @@ class TestCheckTrustpilotSpikes:
     async def test_publishes_critical_when_spike(self):
         from agent1.worker.pollers.feedbacks_poller import _check_trustpilot_spikes
 
-        mock_client = _make_mock_client()
-        mock_client.get.return_value = _mock_response({
-            "data": {
-                "byStatus": {"new": 5, "responded": 10},
-                "total": 15,
-            },
-        })
+        mock_client = AsyncMock()
+        mock_client.get_trustpilot_summary.return_value = {
+            "byStatus": {"new": 5, "responded": 10},
+            "total": 15,
+        }
 
         mock_publish = AsyncMock()
         mock_is_dup = AsyncMock(return_value=False)
