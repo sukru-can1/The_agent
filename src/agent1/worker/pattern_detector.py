@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC
+
 from agent1.common.db import get_pool
 from agent1.common.logging import get_logger
 from agent1.common.models import Event, EventSource, Priority
@@ -44,9 +46,10 @@ async def _detect_ticket_spikes() -> None:
 
         # Check against adaptive baseline
         try:
+            from datetime import datetime
+
             from agent1.intelligence.analytics_engine import get_baseline, is_anomaly
-            from datetime import datetime, timezone
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             baseline = get_baseline(row["source"], row["event_type"], now.weekday(), now.hour)
             if not is_anomaly(row["source"], row["event_type"], row["count"], baseline):
                 continue
@@ -83,67 +86,57 @@ async def _detect_ticket_spikes() -> None:
 
 
 async def _detect_csat_trends() -> None:
-    """Check feedbacks DB for negative CSAT trend (if available)."""
+    """Check feedbacks API for CSAT anomalies via GET /insights."""
     try:
         from agent1.common.settings import get_settings
 
         settings = get_settings()
-        if not settings.feedbacks_database_url:
+        if not settings.feedbacks_api_key:
             return
 
-        import asyncpg
+        import httpx
 
-        conn = await asyncpg.connect(settings.feedbacks_database_url)
-        try:
-            # Check for negative sentiment spike in last 24 hours vs previous 24 hours
-            current = await conn.fetchval(
-                """
-                SELECT COUNT(*) FROM "SurveyResponse"
-                WHERE sentiment = 'negative'
-                  AND "createdAt" >= NOW() - INTERVAL '24 hours'
-                """
+        async with httpx.AsyncClient(
+            base_url=settings.feedbacks_api_url,
+            headers={"Authorization": f"Bearer {settings.feedbacks_api_key}"},
+            timeout=30.0,
+        ) as client:
+            resp = await client.get("/insights", params={"days": 1})
+            resp.raise_for_status()
+            data = resp.json()
+            if isinstance(data, dict) and "data" in data:
+                data = data["data"]
+
+        # Look for alertDetails with critical or warning severity
+        alert_details = data.get("alertDetails", [])
+        critical_alerts = [
+            a for a in alert_details if a.get("severity") in ("critical", "warning")
+        ]
+
+        if not critical_alerts:
+            return
+
+        from agent1.common.redis_client import get_redis
+
+        redis = await get_redis()
+        pattern_key = "pattern:csat_trend"
+        if not await redis.exists(pattern_key):
+            await redis.set(pattern_key, "1", ex=86400)
+
+            messages = [a.get("message", a.get("type", "unknown")) for a in critical_alerts]
+            event = Event(
+                source=EventSource.FEEDBACKS,
+                event_type="pattern_detected",
+                priority=Priority.HIGH,
+                payload={
+                    "pattern_type": "csat_negative_trend",
+                    "alert_count": len(critical_alerts),
+                    "alerts": critical_alerts,
+                    "message": f"CSAT anomaly detected: {'; '.join(messages)}",
+                },
             )
-            previous = await conn.fetchval(
-                """
-                SELECT COUNT(*) FROM "SurveyResponse"
-                WHERE sentiment = 'negative'
-                  AND "createdAt" >= NOW() - INTERVAL '48 hours'
-                  AND "createdAt" < NOW() - INTERVAL '24 hours'
-                """
-            )
-
-            if current and previous and current > previous * 1.5 and current >= 3:
-                # Significant increase in negative feedback
-                from agent1.common.redis_client import get_redis
-
-                redis = await get_redis()
-                pattern_key = "pattern:csat_trend"
-                if not await redis.exists(pattern_key):
-                    await redis.set(pattern_key, "1", ex=86400)
-
-                    event = Event(
-                        source=EventSource.FEEDBACKS,
-                        event_type="pattern_detected",
-                        priority=Priority.HIGH,
-                        payload={
-                            "pattern_type": "csat_negative_trend",
-                            "current_24h": current,
-                            "previous_24h": previous,
-                            "increase_pct": round((current - previous) / max(previous, 1) * 100, 1),
-                            "message": (
-                                f"Negative CSAT trend: {current} negative responses in last 24h "
-                                f"vs {previous} in previous 24h ({round((current - previous) / max(previous, 1) * 100)}% increase)"
-                            ),
-                        },
-                    )
-                    await publish_event(event)
-                    log.info(
-                        "csat_trend_detected",
-                        current=current,
-                        previous=previous,
-                    )
-        finally:
-            await conn.close()
+            await publish_event(event)
+            log.info("csat_trend_detected", alert_count=len(critical_alerts))
     except Exception:
         log.exception("csat_trend_detection_failed")
 

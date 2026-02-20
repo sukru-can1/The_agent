@@ -42,48 +42,51 @@ async def execute_tool(name: str, params: dict[str, Any]) -> Any:
 
 def register_all_tools() -> None:
     """Register all available tools."""
-    from agent1.tools.gmail import (
-        GmailGetNewEmailsTool,
-        GmailGetEmailTool,
-        GmailDraftReplyTool,
-        GmailSendApprovedTool,
-        GmailLabelEmailTool,
-    )
-    from agent1.tools.google_chat import (
-        GChatPostMessageTool,
-        GChatReplyAsAgentTool,
-        GChatGetMessagesTool,
-    )
-    from agent1.tools.google_drive import (
-        DriveSearchTool,
-        DriveReadDocumentTool,
+    from agent1.tools.feedbacks import (
+        FeedbacksGetInsightsTool,
+        FeedbacksGetOverviewTool,
+        FeedbacksGetSurveyResponsesTool,
+        FeedbacksGetTasksTool,
+        FeedbacksGetTrustpilotReviewsTool,
+        FeedbacksStartAutoReporterTool,
+        FeedbacksTriggerTrustpilotSyncTool,
     )
     from agent1.tools.freshdesk import (
+        FreshdeskAddNoteTool,
         FreshdeskGetTicketsTool,
         FreshdeskGetTicketTool,
-        FreshdeskAddNoteTool,
         FreshdeskUpdateTicketTool,
     )
-    from agent1.tools.starinfinity import (
-        StarInfinityListBoardsTool,
-        StarInfinityGetTasksTool,
-        StarInfinityCreateTaskTool,
-        StarInfinityUpdateTaskTool,
+    from agent1.tools.gmail import (
+        GmailDraftReplyTool,
+        GmailGetEmailTool,
+        GmailGetNewEmailsTool,
+        GmailLabelEmailTool,
+        GmailSendApprovedTool,
     )
-    from agent1.tools.feedbacks import (
-        FeedbacksGetCustomerResponsesTool,
-        FeedbacksGetRecentComplaintsTool,
-        FeedbacksGetCsatSummaryTool,
-        FeedbacksGetTrustpilotReviewsTool,
+    from agent1.tools.google_chat import (
+        GChatGetMessagesTool,
+        GChatPostMessageTool,
+        GChatReplyAsAgentTool,
+    )
+    from agent1.tools.google_chat_user import (
+        GChatListMySpacesTool,
+        GChatReplyAsUserTool,
+    )
+    from agent1.tools.google_drive import (
+        DriveReadDocumentTool,
+        DriveSearchTool,
     )
     from agent1.tools.memory import (
         MemorySearchTool,
         MemoryStoreIncidentTool,
         MemoryStoreKnowledgeTool,
     )
-    from agent1.tools.google_chat_user import (
-        GChatReplyAsUserTool,
-        GChatListMySpacesTool,
+    from agent1.tools.starinfinity import (
+        StarInfinityCreateTaskTool,
+        StarInfinityGetTasksTool,
+        StarInfinityListBoardsTool,
+        StarInfinityUpdateTaskTool,
     )
 
     all_tools = [
@@ -111,10 +114,13 @@ def register_all_tools() -> None:
         StarInfinityCreateTaskTool(),
         StarInfinityUpdateTaskTool(),
         # Feedbacks
-        FeedbacksGetCustomerResponsesTool(),
-        FeedbacksGetRecentComplaintsTool(),
-        FeedbacksGetCsatSummaryTool(),
+        FeedbacksGetInsightsTool(),
+        FeedbacksGetOverviewTool(),
         FeedbacksGetTrustpilotReviewsTool(),
+        FeedbacksGetTasksTool(),
+        FeedbacksGetSurveyResponsesTool(),
+        FeedbacksStartAutoReporterTool(),
+        FeedbacksTriggerTrustpilotSyncTool(),
         # Memory
         MemorySearchTool(),
         MemoryStoreIncidentTool(),

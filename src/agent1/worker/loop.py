@@ -463,23 +463,23 @@ async def _handle_summary_event(event: Event, start: float) -> None:
             """
         )
 
-    # Check feedbacks if available
+    # Check feedbacks via API if available
     complaints_24h = 0
     try:
-        if settings.feedbacks_database_url:
-            import asyncpg
+        if settings.feedbacks_api_key:
+            import httpx
 
-            fconn = await asyncpg.connect(settings.feedbacks_database_url)
-            try:
-                complaints_24h = await fconn.fetchval(
-                    """
-                    SELECT COUNT(*) FROM "SurveyResponse"
-                    WHERE sentiment = 'negative'
-                      AND "createdAt" >= NOW() - INTERVAL '24 hours'
-                    """
-                ) or 0
-            finally:
-                await fconn.close()
+            async with httpx.AsyncClient(
+                base_url=settings.feedbacks_api_url,
+                headers={"Authorization": f"Bearer {settings.feedbacks_api_key}"},
+                timeout=15.0,
+            ) as fc:
+                resp = await fc.get("/tasks")
+                resp.raise_for_status()
+                data = resp.json()
+                if isinstance(data, dict) and "data" in data:
+                    data = data["data"]
+                complaints_24h = data.get("complaints", {}).get("new", 0)
     except Exception:
         pass
 

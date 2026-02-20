@@ -1,109 +1,117 @@
-"""Feedbacks DB poller — checks for new complaints and Trustpilot reviews."""
+"""Feedbacks API poller — checks for new complaints and Trustpilot reviews."""
 
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
-from agent1.common.db import get_feedbacks_pool
+import httpx
+
 from agent1.common.logging import get_logger
 from agent1.common.models import Event, EventSource, Priority
+from agent1.common.settings import get_settings
 from agent1.queue.dedup import is_duplicate, mark_processed
 from agent1.queue.publisher import publish_event
 
 log = get_logger(__name__)
 
 
-async def poll_feedbacks() -> None:
-    """Check feedbacks DB for new complaints and low-star reviews.
+def _get_client() -> httpx.AsyncClient | None:
+    """Create an httpx client for the Feedbacks API."""
+    settings = get_settings()
+    if not settings.feedbacks_api_key:
+        return None
+    return httpx.AsyncClient(
+        base_url=settings.feedbacks_api_url,
+        headers={"Authorization": f"Bearer {settings.feedbacks_api_key}"},
+        timeout=30.0,
+    )
 
-    - New complaints (taskStatus = 'new', taskType = 'complaint') -> HIGH priority
-    - Low-star Trustpilot reviews (stars <= 2, status = 'new') -> HIGH priority
-    - Trustpilot review spikes (3+ negative in 1 hour) -> CRITICAL
+
+def _unwrap(data: dict) -> dict:
+    """Strip the standard API envelope if present."""
+    if isinstance(data, dict) and "data" in data:
+        return data["data"]
+    return data
+
+
+async def poll_feedbacks() -> None:
+    """Check feedbacks API for new complaints and low-star reviews.
+
+    - New complaints (tasks with new count > 0) -> HIGH priority
+    - Low-star Trustpilot reviews (stars <= 2, status = new) -> HIGH priority
+    - Trustpilot review spikes (3+ new reviews) -> CRITICAL
     """
-    pool = await get_feedbacks_pool()
-    if pool is None:
-        log.debug("feedbacks_poll_skipped", reason="no feedbacks DB configured")
+    client = _get_client()
+    if client is None:
+        log.debug("feedbacks_poll_skipped", reason="no feedbacks API key configured")
         return
 
     log.debug("feedbacks_poll_started")
 
     try:
-        await _poll_new_complaints(pool)
-        await _poll_trustpilot_reviews(pool)
-        await _check_trustpilot_spikes(pool)
+        async with client:
+            await _poll_new_complaints(client)
+            await _poll_trustpilot_reviews(client)
+            await _check_trustpilot_spikes(client)
     except Exception as exc:
         log.warning("feedbacks_poll_error", error=str(exc))
 
     log.debug("feedbacks_poll_completed")
 
 
-async def _poll_new_complaints(pool) -> None:
-    """Check for new complaint survey responses."""
-    since = datetime.now(UTC) - timedelta(minutes=15)
+async def _poll_new_complaints(client: httpx.AsyncClient) -> None:
+    """Check for new complaint tasks via GET /tasks."""
+    resp = await client.get("/tasks")
+    resp.raise_for_status()
+    data = _unwrap(resp.json())
 
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            """
-            SELECT id, "customerEmail", "customerName", "countryCode",
-                   "freshdeskTicketId", "createdAt"
-            FROM "SurveyResponse"
-            WHERE "taskType" = 'complaint'
-              AND "taskStatus" = 'new'
-              AND "createdAt" > $1
-            ORDER BY "createdAt" DESC
-            LIMIT 50
-            """,
-            since,
-        )
+    complaints = data.get("complaints", {})
+    new_count = complaints.get("new", 0)
 
-    for row in rows:
-        dedup_key = f"feedbacks:complaint:{row['id']}"
-        if await is_duplicate(dedup_key):
+    if new_count <= 0:
+        return
+
+    # Dedup by hour to avoid repeat alerts for the same batch
+    hour_key = datetime.now(UTC).strftime("%Y%m%d%H")
+    dedup_id = f"complaint_batch:{hour_key}"
+
+    if await is_duplicate("feedbacks", dedup_id):
+        return
+
+    event = Event(
+        id=uuid.uuid4(),
+        source=EventSource.FEEDBACKS,
+        event_type="new_complaints",
+        priority=Priority.HIGH,
+        payload={
+            "new_count": new_count,
+            "message": f"{new_count} new complaint(s) awaiting review",
+        },
+        idempotency_key=f"feedbacks:complaint_batch:{hour_key}",
+    )
+    await publish_event(event)
+    await mark_processed("feedbacks", dedup_id)
+    log.info("feedbacks_complaints_event", new_count=new_count)
+
+
+async def _poll_trustpilot_reviews(client: httpx.AsyncClient) -> None:
+    """Check for new low-star Trustpilot reviews via GET /trustpilot/reviews."""
+    resp = await client.get("/trustpilot/reviews", params={"status": "new", "limit": 50})
+    resp.raise_for_status()
+    data = _unwrap(resp.json())
+
+    reviews = data.get("reviews", [])
+
+    for review in reviews:
+        stars = review.get("stars", 5)
+        if stars > 2:
             continue
 
-        event = Event(
-            id=uuid.uuid4(),
-            source=EventSource.FEEDBACKS,
-            event_type="new_complaint",
-            priority=Priority.HIGH,
-            payload={
-                "response_id": row["id"],
-                "customer_email": row["customerEmail"],
-                "customer_name": row["customerName"],
-                "country_code": row["countryCode"],
-                "freshdesk_ticket_id": row["freshdeskTicketId"],
-            },
-            idempotency_key=dedup_key,
-        )
-        await publish_event(event)
-        await mark_processed(dedup_key)
-        log.info("feedbacks_complaint_event", response_id=row["id"])
+        review_id = str(review.get("id", ""))
+        dedup_id = f"trustpilot:{review_id}"
 
-
-async def _poll_trustpilot_reviews(pool) -> None:
-    """Check for new low-star Trustpilot reviews."""
-    since = datetime.now(UTC) - timedelta(minutes=15)
-
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            """
-            SELECT id, "trustpilotId", title, stars, "reviewerName",
-                   "reviewerCountry", "isDefendable", "taskStatus",
-                   "reviewCreatedAt"
-            FROM "TrustpilotReview"
-            WHERE stars <= 2
-              AND "taskStatus" = 'new'
-              AND "reviewCreatedAt" > $1
-            ORDER BY "reviewCreatedAt" DESC
-            LIMIT 50
-            """,
-            since,
-        )
-
-    for row in rows:
-        dedup_key = f"feedbacks:trustpilot:{row['id']}"
-        if await is_duplicate(dedup_key):
+        if await is_duplicate("feedbacks", dedup_id):
             continue
 
         event = Event(
@@ -112,53 +120,51 @@ async def _poll_trustpilot_reviews(pool) -> None:
             event_type="trustpilot_review",
             priority=Priority.HIGH,
             payload={
-                "review_id": row["id"],
-                "trustpilot_id": row["trustpilotId"],
-                "title": row["title"],
-                "stars": row["stars"],
-                "reviewer_name": row["reviewerName"],
-                "reviewer_country": row["reviewerCountry"],
-                "is_defendable": row["isDefendable"],
+                "review_id": review.get("id"),
+                "trustpilot_id": review.get("trustpilotId"),
+                "title": review.get("title"),
+                "stars": stars,
+                "reviewer_name": review.get("reviewerName"),
+                "reviewer_country": review.get("reviewerCountry"),
+                "is_defendable": review.get("isDefendable"),
             },
-            idempotency_key=dedup_key,
+            idempotency_key=f"feedbacks:trustpilot:{review_id}",
         )
         await publish_event(event)
-        await mark_processed(dedup_key)
-        log.info("feedbacks_trustpilot_event", review_id=row["id"], stars=row["stars"])
+        await mark_processed("feedbacks", dedup_id)
+        log.info("feedbacks_trustpilot_event", review_id=review_id, stars=stars)
 
 
-async def _check_trustpilot_spikes(pool) -> None:
-    """Detect Trustpilot review spikes: 3+ negative reviews in 1 hour."""
-    one_hour_ago = datetime.now(UTC) - timedelta(hours=1)
+async def _check_trustpilot_spikes(client: httpx.AsyncClient) -> None:
+    """Detect Trustpilot review spikes: 3+ new reviews -> CRITICAL."""
+    resp = await client.get("/trustpilot")
+    resp.raise_for_status()
+    data = _unwrap(resp.json())
 
-    async with pool.acquire() as conn:
-        count = await conn.fetchval(
-            """
-            SELECT COUNT(*)
-            FROM "TrustpilotReview"
-            WHERE stars <= 2
-              AND "reviewCreatedAt" > $1
-            """,
-            one_hour_ago,
-        )
+    by_status = data.get("byStatus", {})
+    new_count = by_status.get("new", 0)
 
-    if count is not None and count >= 3:
-        dedup_key = f"feedbacks:trustpilot_spike:{one_hour_ago.strftime('%Y%m%d%H')}"
-        if await is_duplicate(dedup_key):
-            return
+    if new_count < 3:
+        return
 
-        event = Event(
-            id=uuid.uuid4(),
-            source=EventSource.FEEDBACKS,
-            event_type="trustpilot_spike",
-            priority=Priority.CRITICAL,
-            payload={
-                "negative_review_count": count,
-                "window": "1 hour",
-                "message": f"{count} negative Trustpilot reviews in the last hour",
-            },
-            idempotency_key=dedup_key,
-        )
-        await publish_event(event)
-        await mark_processed(dedup_key)
-        log.warning("trustpilot_spike_detected", count=count)
+    hour_key = datetime.now(UTC).strftime("%Y%m%d%H")
+    dedup_id = f"trustpilot_spike:{hour_key}"
+
+    if await is_duplicate("feedbacks", dedup_id):
+        return
+
+    event = Event(
+        id=uuid.uuid4(),
+        source=EventSource.FEEDBACKS,
+        event_type="trustpilot_spike",
+        priority=Priority.CRITICAL,
+        payload={
+            "negative_review_count": new_count,
+            "window": "recent",
+            "message": f"{new_count} new Trustpilot reviews pending — possible spike",
+        },
+        idempotency_key=f"feedbacks:trustpilot_spike:{hour_key}",
+    )
+    await publish_event(event)
+    await mark_processed("feedbacks", dedup_id)
+    log.warning("trustpilot_spike_detected", count=new_count)

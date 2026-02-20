@@ -684,7 +684,7 @@ async def list_integrations():
         {"id": "gchat", "name": "Google Chat", "active": bool(settings.gchat_space_alerts)},
         {"id": "freshdesk", "name": "Freshdesk", "active": bool(settings.freshdesk_api_key)},
         {"id": "starinfinity", "name": "StarInfinity", "active": bool(settings.starinfinity_api_key)},
-        {"id": "feedbacks", "name": "Feedbacks DB", "active": bool(settings.feedbacks_database_url)},
+        {"id": "feedbacks", "name": "Feedbacks API", "active": bool(settings.feedbacks_api_key)},
         {"id": "voyage", "name": "Voyage AI", "active": bool(settings.voyage_api_key)},
         {"id": "langfuse", "name": "LangFuse", "active": bool(settings.langfuse_public_key)},
         {"id": "mcp", "name": "MCP Tools", "active": settings.dynamic_tools_enabled},

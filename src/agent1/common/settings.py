@@ -28,8 +28,9 @@ class Settings(BaseSettings):
     db_pool_min: int = 2
     db_pool_max: int = 10
 
-    # --- Feedbacks DB (read-only) ---
-    feedbacks_database_url: str = ""
+    # --- Feedbacks API ---
+    feedbacks_api_url: str = "https://survey.glamira.com/api/v1"
+    feedbacks_api_key: str = ""
 
     # --- Redis ---
     redis_url: str = "redis://localhost:6379/0"
