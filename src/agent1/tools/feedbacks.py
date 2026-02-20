@@ -4,37 +4,15 @@ from __future__ import annotations
 
 from typing import Any
 
-import httpx
-
-from agent1.common.logging import get_logger
-from agent1.common.settings import get_settings
+from agent1.integrations import FeedbacksClient, IntegrationError
 from agent1.tools.base import BaseTool
-
-log = get_logger(__name__)
 
 _NOT_CONFIGURED = {"error": "Feedbacks API not configured — set feedbacks_api_key"}
 
 
-def _get_client() -> httpx.AsyncClient | None:
-    """Create an httpx client for the Feedbacks API.
-
-    Returns None if feedbacks_api_key is not set.
-    """
-    settings = get_settings()
-    if not settings.feedbacks_api_key:
-        return None
-    return httpx.AsyncClient(
-        base_url=settings.feedbacks_api_url,
-        headers={"Authorization": f"Bearer {settings.feedbacks_api_key}"},
-        timeout=30.0,
-    )
-
-
-def _unwrap(data: Any) -> Any:
-    """Strip the standard API envelope {app, timestamp, data} if present."""
-    if isinstance(data, dict) and "data" in data:
-        return data["data"]
-    return data
+def _error(exc: IntegrationError) -> dict[str, str]:
+    """Convert an IntegrationError to a tool-friendly error dict."""
+    return {"error": f"Feedbacks API error {exc.status_code}" if exc.status_code else f"Feedbacks: {exc.detail}"}
 
 
 class FeedbacksGetInsightsTool(BaseTool):
@@ -59,8 +37,8 @@ class FeedbacksGetInsightsTool(BaseTool):
     }
 
     async def execute(self, **kwargs: Any) -> Any:
-        client = _get_client()
-        if client is None:
+        client = FeedbacksClient()
+        if not client.available:
             return _NOT_CONFIGURED
 
         params: dict[str, Any] = {}
@@ -73,13 +51,9 @@ class FeedbacksGetInsightsTool(BaseTool):
 
         try:
             async with client:
-                resp = await client.get("/insights", params=params)
-                resp.raise_for_status()
-                return _unwrap(resp.json())
-        except httpx.HTTPStatusError as exc:
-            return {"error": f"Feedbacks API error {exc.response.status_code}"}
-        except httpx.HTTPError as exc:
-            return {"error": str(exc)}
+                return await client.get_insights(**params)
+        except IntegrationError as exc:
+            return _error(exc)
 
 
 class FeedbacksGetOverviewTool(BaseTool):
@@ -91,19 +65,15 @@ class FeedbacksGetOverviewTool(BaseTool):
     }
 
     async def execute(self, **kwargs: Any) -> Any:
-        client = _get_client()
-        if client is None:
+        client = FeedbacksClient()
+        if not client.available:
             return _NOT_CONFIGURED
 
         try:
             async with client:
-                resp = await client.get("/overview")
-                resp.raise_for_status()
-                return _unwrap(resp.json())
-        except httpx.HTTPStatusError as exc:
-            return {"error": f"Feedbacks API error {exc.response.status_code}"}
-        except httpx.HTTPError as exc:
-            return {"error": str(exc)}
+                return await client.get_overview()
+        except IntegrationError as exc:
+            return _error(exc)
 
 
 class FeedbacksGetTrustpilotReviewsTool(BaseTool):
@@ -128,8 +98,8 @@ class FeedbacksGetTrustpilotReviewsTool(BaseTool):
     }
 
     async def execute(self, **kwargs: Any) -> Any:
-        client = _get_client()
-        if client is None:
+        client = FeedbacksClient()
+        if not client.available:
             return _NOT_CONFIGURED
 
         params: dict[str, Any] = {}
@@ -142,13 +112,9 @@ class FeedbacksGetTrustpilotReviewsTool(BaseTool):
 
         try:
             async with client:
-                resp = await client.get("/trustpilot/reviews", params=params)
-                resp.raise_for_status()
-                return _unwrap(resp.json())
-        except httpx.HTTPStatusError as exc:
-            return {"error": f"Feedbacks API error {exc.response.status_code}"}
-        except httpx.HTTPError as exc:
-            return {"error": str(exc)}
+                return await client.get_trustpilot_reviews(**params)
+        except IntegrationError as exc:
+            return _error(exc)
 
 
 class FeedbacksGetTasksTool(BaseTool):
@@ -166,8 +132,8 @@ class FeedbacksGetTasksTool(BaseTool):
     }
 
     async def execute(self, **kwargs: Any) -> Any:
-        client = _get_client()
-        if client is None:
+        client = FeedbacksClient()
+        if not client.available:
             return _NOT_CONFIGURED
 
         params: dict[str, Any] = {}
@@ -178,13 +144,9 @@ class FeedbacksGetTasksTool(BaseTool):
 
         try:
             async with client:
-                resp = await client.get("/tasks", params=params)
-                resp.raise_for_status()
-                return _unwrap(resp.json())
-        except httpx.HTTPStatusError as exc:
-            return {"error": f"Feedbacks API error {exc.response.status_code}"}
-        except httpx.HTTPError as exc:
-            return {"error": str(exc)}
+                return await client.get_tasks(**params)
+        except IntegrationError as exc:
+            return _error(exc)
 
 
 class FeedbacksGetSurveyResponsesTool(BaseTool):
@@ -201,8 +163,8 @@ class FeedbacksGetSurveyResponsesTool(BaseTool):
     }
 
     async def execute(self, **kwargs: Any) -> Any:
-        client = _get_client()
-        if client is None:
+        client = FeedbacksClient()
+        if not client.available:
             return _NOT_CONFIGURED
 
         survey_id = kwargs["survey_id"]
@@ -214,13 +176,9 @@ class FeedbacksGetSurveyResponsesTool(BaseTool):
 
         try:
             async with client:
-                resp = await client.get(f"/surveys/{survey_id}/responses", params=params)
-                resp.raise_for_status()
-                return _unwrap(resp.json())
-        except httpx.HTTPStatusError as exc:
-            return {"error": f"Feedbacks API error {exc.response.status_code}"}
-        except httpx.HTTPError as exc:
-            return {"error": str(exc)}
+                return await client.get_survey_responses(survey_id, **params)
+        except IntegrationError as exc:
+            return _error(exc)
 
 
 class FeedbacksStartAutoReporterTool(BaseTool):
@@ -237,8 +195,8 @@ class FeedbacksStartAutoReporterTool(BaseTool):
     }
 
     async def execute(self, **kwargs: Any) -> Any:
-        client = _get_client()
-        if client is None:
+        client = FeedbacksClient()
+        if not client.available:
             return _NOT_CONFIGURED
 
         body: dict[str, Any] = {}
@@ -247,13 +205,9 @@ class FeedbacksStartAutoReporterTool(BaseTool):
 
         try:
             async with client:
-                resp = await client.post("/actions/auto-reporter-start", json=body)
-                resp.raise_for_status()
-                return _unwrap(resp.json())
-        except httpx.HTTPStatusError as exc:
-            return {"error": f"Feedbacks API error {exc.response.status_code}"}
-        except httpx.HTTPError as exc:
-            return {"error": str(exc)}
+                return await client.start_auto_reporter(**body)
+        except IntegrationError as exc:
+            return _error(exc)
 
 
 class FeedbacksTriggerTrustpilotSyncTool(BaseTool):
@@ -265,16 +219,12 @@ class FeedbacksTriggerTrustpilotSyncTool(BaseTool):
     }
 
     async def execute(self, **kwargs: Any) -> Any:
-        client = _get_client()
-        if client is None:
+        client = FeedbacksClient()
+        if not client.available:
             return _NOT_CONFIGURED
 
         try:
             async with client:
-                resp = await client.post("/actions/trustpilot-sync", json={})
-                resp.raise_for_status()
-                return _unwrap(resp.json())
-        except httpx.HTTPStatusError as exc:
-            return {"error": f"Feedbacks API error {exc.response.status_code}"}
-        except httpx.HTTPError as exc:
-            return {"error": str(exc)}
+                return await client.trigger_trustpilot_sync()
+        except IntegrationError as exc:
+            return _error(exc)

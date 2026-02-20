@@ -7,22 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-
-# ── Helper Tests ────────────────────────────────────────────
-
-
-class TestUnwrap:
-    def test_extracts_data_from_envelope(self):
-        from agent1.tools.feedbacks import _unwrap
-
-        envelope = {"app": "feedbacks", "timestamp": "2024-01-01", "data": {"count": 5}}
-        assert _unwrap(envelope) == {"count": 5}
-
-    def test_passes_through_if_no_data_key(self):
-        from agent1.tools.feedbacks import _unwrap
-
-        raw = {"count": 5, "items": []}
-        assert _unwrap(raw) == {"count": 5, "items": []}
+from agent1.integrations._base import IntegrationError
 
 
 # ── Not-Configured Tests ────────────────────────────────────
@@ -47,7 +32,7 @@ class TestNotConfigured:
         cls = getattr(mod, tool_cls)
         tool = cls()
 
-        with patch("agent1.tools.feedbacks.get_settings") as mock_settings:
+        with patch("agent1.integrations.feedbacks.get_settings") as mock_settings:
             mock_settings.return_value = MagicMock(feedbacks_api_key="", feedbacks_api_url="https://x")
             # Provide required params for tools that need them
             kwargs = {}
@@ -72,6 +57,7 @@ def _mock_response(json_data, status_code=200):
 def _mock_http_error_response(status_code=500):
     resp = MagicMock(spec=httpx.Response)
     resp.status_code = status_code
+    resp.text = "Server Error"
     resp.json.return_value = {"error": "server error"}
     resp.raise_for_status.side_effect = httpx.HTTPStatusError(
         "Server Error", request=MagicMock(), response=resp
@@ -85,12 +71,12 @@ def _patch_settings(**overrides):
         "feedbacks_api_key": "test-key",
     }
     defaults.update(overrides)
-    return patch("agent1.tools.feedbacks.get_settings", return_value=MagicMock(**defaults))
+    return patch("agent1.integrations.feedbacks.get_settings", return_value=MagicMock(**defaults))
 
 
 def _patch_client(mock_client):
     """Patch httpx.AsyncClient to return our mock."""
-    return patch("agent1.tools.feedbacks.httpx.AsyncClient", return_value=mock_client)
+    return patch("agent1.integrations._base.httpx.AsyncClient", return_value=mock_client)
 
 
 def _make_mock_client():
@@ -109,7 +95,7 @@ class TestFeedbacksGetInsightsTool:
 
         tool = FeedbacksGetInsightsTool()
         mock_client = _make_mock_client()
-        mock_client.get.return_value = _mock_response({
+        mock_client.request.return_value = _mock_response({
             "app": "feedbacks",
             "timestamp": "2024-01-01",
             "data": {
@@ -121,9 +107,10 @@ class TestFeedbacksGetInsightsTool:
         with _patch_settings(), _patch_client(mock_client):
             result = await tool.execute(days=7, threshold=0.3, min_sample=10)
 
-        mock_client.get.assert_called_once()
-        call_args = mock_client.get.call_args
-        assert call_args[0][0] == "/insights"
+        mock_client.request.assert_called_once()
+        call_args = mock_client.request.call_args
+        assert call_args[0][0] == "GET"
+        assert call_args[0][1] == "/insights"
         assert call_args[1]["params"]["days"] == 7
         assert call_args[1]["params"]["threshold"] == 0.3
         assert call_args[1]["params"]["minSample"] == 10
@@ -134,7 +121,7 @@ class TestFeedbacksGetInsightsTool:
 
         tool = FeedbacksGetInsightsTool()
         mock_client = _make_mock_client()
-        mock_client.get.return_value = _mock_http_error_response(502)
+        mock_client.request.return_value = _mock_http_error_response(502)
 
         with _patch_settings(), _patch_client(mock_client):
             result = await tool.execute()
@@ -147,7 +134,7 @@ class TestFeedbacksGetInsightsTool:
 
         tool = FeedbacksGetInsightsTool()
         mock_client = _make_mock_client()
-        mock_client.get.side_effect = httpx.ConnectError("Connection refused")
+        mock_client.request.side_effect = httpx.ConnectError("Connection refused")
 
         with _patch_settings(), _patch_client(mock_client):
             result = await tool.execute()
@@ -164,7 +151,7 @@ class TestFeedbacksGetTrustpilotReviewsTool:
 
         tool = FeedbacksGetTrustpilotReviewsTool()
         mock_client = _make_mock_client()
-        mock_client.get.return_value = _mock_response({
+        mock_client.request.return_value = _mock_response({
             "data": {
                 "reviews": [
                     {"id": 1, "stars": 1, "title": "Bad", "isDefendable": True},
@@ -176,8 +163,8 @@ class TestFeedbacksGetTrustpilotReviewsTool:
         with _patch_settings(), _patch_client(mock_client):
             result = await tool.execute(max_stars=2, status="new", limit=10)
 
-        mock_client.get.assert_called_once()
-        call_args = mock_client.get.call_args
+        mock_client.request.assert_called_once()
+        call_args = mock_client.request.call_args
         assert call_args[1]["params"]["maxStars"] == 2
         assert call_args[1]["params"]["status"] == "new"
         assert "reviews" in result
@@ -192,15 +179,15 @@ class TestFeedbacksGetSurveyResponsesTool:
 
         tool = FeedbacksGetSurveyResponsesTool()
         mock_client = _make_mock_client()
-        mock_client.get.return_value = _mock_response({
+        mock_client.request.return_value = _mock_response({
             "data": {"responses": [], "pagination": {}},
         })
 
         with _patch_settings(), _patch_client(mock_client):
             result = await tool.execute(survey_id="srv_123", page=2, limit=25)
 
-        call_args = mock_client.get.call_args
-        assert call_args[0][0] == "/surveys/srv_123/responses"
+        call_args = mock_client.request.call_args
+        assert call_args[0][1] == "/surveys/srv_123/responses"
         assert call_args[1]["params"]["page"] == 2
 
 
@@ -213,14 +200,15 @@ class TestFeedbacksStartAutoReporterTool:
 
         tool = FeedbacksStartAutoReporterTool()
         mock_client = _make_mock_client()
-        mock_client.post.return_value = _mock_response({"data": {"started": True}})
+        mock_client.request.return_value = _mock_response({"data": {"started": True}})
 
         with _patch_settings(), _patch_client(mock_client):
             result = await tool.execute(count=5)
 
-        mock_client.post.assert_called_once()
-        call_args = mock_client.post.call_args
-        assert call_args[0][0] == "/actions/auto-reporter-start"
+        mock_client.request.assert_called_once()
+        call_args = mock_client.request.call_args
+        assert call_args[0][0] == "POST"
+        assert call_args[0][1] == "/actions/auto-reporter-start"
         assert call_args[1]["json"]["count"] == 5
 
 
@@ -233,11 +221,11 @@ class TestFeedbacksTriggerTrustpilotSyncTool:
 
         tool = FeedbacksTriggerTrustpilotSyncTool()
         mock_client = _make_mock_client()
-        mock_client.post.return_value = _mock_response({"data": {"synced": 12}})
+        mock_client.request.return_value = _mock_response({"data": {"synced": 12}})
 
         with _patch_settings(), _patch_client(mock_client):
             result = await tool.execute()
 
-        mock_client.post.assert_called_once()
-        call_args = mock_client.post.call_args
-        assert call_args[0][0] == "/actions/trustpilot-sync"
+        mock_client.request.assert_called_once()
+        call_args = mock_client.request.call_args
+        assert call_args[0][1] == "/actions/trustpilot-sync"
