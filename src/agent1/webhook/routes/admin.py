@@ -676,6 +676,57 @@ async def store_knowledge_entry(body: StoreKnowledgeBody):
     return {"id": row["id"], "created_at": str(row["created_at"])}
 
 
+@router.get("/llm-provider")
+async def get_llm_provider():
+    """Return the active LLM provider and available models."""
+    from agent1.reasoning.providers import get_active_provider_name, provider_available
+    from agent1.reasoning.router import get_fast_model, get_flash_model
+
+    settings = get_settings()
+    name = get_active_provider_name()
+    return {
+        "provider": name,
+        "available": provider_available(),
+        "models": {
+            "flash": get_flash_model(),
+            "fast": get_fast_model(),
+            "default": getattr(settings, f"{name}_model_default", ""),
+            "pro": getattr(settings, f"{name}_model_pro", ""),
+        },
+    }
+
+
+class LLMProviderSwitch(BaseModel):
+    provider: str  # "gemini" or "openrouter"
+
+
+@router.post("/llm-provider")
+async def switch_llm_provider(body: LLMProviderSwitch):
+    """Switch the active LLM provider at runtime (no redeploy needed)."""
+    from agent1.reasoning.providers import (
+        get_active_provider_name,
+        provider_available,
+        set_provider_override,
+    )
+
+    name = body.provider.lower()
+    if name not in ("gemini", "openrouter"):
+        raise HTTPException(400, f"Unknown provider: {name}")
+
+    set_provider_override(name)
+
+    if not provider_available():
+        # Roll back — API key not configured
+        set_provider_override(None)
+        raise HTTPException(
+            400,
+            f"Cannot switch to {name}: API key not configured",
+        )
+
+    log.info("llm_provider_switched", provider=get_active_provider_name())
+    return {"provider": get_active_provider_name(), "status": "switched"}
+
+
 @router.get("/integrations")
 async def list_integrations():
     """List configured integrations and their status."""

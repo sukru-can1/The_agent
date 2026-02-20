@@ -6,6 +6,14 @@ from agent1.common.settings import get_settings
 from agent1.reasoning.providers._base import LLMProvider
 
 _provider: LLMProvider | None = None
+_provider_override: str | None = None  # runtime override via admin API
+
+
+def _active_provider_name() -> str:
+    """Return the active provider name (override > env var)."""
+    if _provider_override:
+        return _provider_override.lower()
+    return get_settings().llm_provider.lower()
 
 
 def get_provider() -> LLMProvider:
@@ -15,7 +23,7 @@ def get_provider() -> LLMProvider:
         return _provider
 
     settings = get_settings()
-    name = settings.llm_provider.lower()
+    name = _active_provider_name()
 
     if name == "openrouter":
         if not settings.openrouter_api_key:
@@ -37,13 +45,26 @@ def get_provider() -> LLMProvider:
 def provider_available() -> bool:
     """Check if the active provider's API key is configured."""
     settings = get_settings()
-    name = settings.llm_provider.lower()
+    name = _active_provider_name()
     if name == "openrouter":
         return bool(settings.openrouter_api_key)
     return bool(settings.gemini_api_key)
 
 
+def get_active_provider_name() -> str:
+    """Return the current provider name (for status endpoints)."""
+    return _active_provider_name()
+
+
+def set_provider_override(name: str | None) -> None:
+    """Set a runtime override for the provider. Resets the singleton."""
+    global _provider_override, _provider
+    _provider_override = name
+    _provider = None
+
+
 def reset_provider() -> None:
     """Reset the singleton (for testing)."""
-    global _provider
+    global _provider, _provider_override
     _provider = None
+    _provider_override = None
