@@ -105,7 +105,7 @@ def test_openrouter_simple_uses_fast(monkeypatch):
         complexity=Complexity.SIMPLE,
     )
     model = select_model(result)
-    assert model == "anthropic/claude-haiku-4"
+    assert model == "moonshotai/kimi-k2.5"
 
 
 def test_openrouter_complex_uses_pro(monkeypatch):
@@ -117,7 +117,7 @@ def test_openrouter_complex_uses_pro(monkeypatch):
         complexity=Complexity.COMPLEX,
     )
     model = select_model(result)
-    assert model == "anthropic/claude-opus-4"
+    assert model == "moonshotai/kimi-k2-thinking"
 
 
 def test_openrouter_vip_uses_pro(monkeypatch):
@@ -130,7 +130,7 @@ def test_openrouter_vip_uses_pro(monkeypatch):
         involves_vip=True,
     )
     model = select_model(result)
-    assert model == "anthropic/claude-opus-4"
+    assert model == "moonshotai/kimi-k2-thinking"
 
 
 # --- Helper functions ---
@@ -148,9 +148,9 @@ def test_get_fast_model_gemini(monkeypatch):
 
 def test_get_flash_model_openrouter(monkeypatch):
     _reset_settings(monkeypatch, LLM_PROVIDER="openrouter")
-    assert get_flash_model() == "google/gemini-2.0-flash-001"
+    assert get_flash_model() == "google/gemini-2.5-flash"
 
 
 def test_get_fast_model_openrouter(monkeypatch):
     _reset_settings(monkeypatch, LLM_PROVIDER="openrouter")
-    assert get_fast_model() == "anthropic/claude-haiku-4"
+    assert get_fast_model() == "moonshotai/kimi-k2.5"

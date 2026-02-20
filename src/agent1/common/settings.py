@@ -23,10 +23,10 @@ class Settings(BaseSettings):
 
     # --- OpenRouter ---
     openrouter_api_key: str = ""
-    openrouter_model_flash: str = "google/gemini-2.0-flash-001"
-    openrouter_model_fast: str = "anthropic/claude-haiku-4"
-    openrouter_model_default: str = "anthropic/claude-sonnet-4"
-    openrouter_model_pro: str = "anthropic/claude-opus-4"
+    openrouter_model_flash: str = "google/gemini-2.5-flash"
+    openrouter_model_fast: str = "moonshotai/kimi-k2.5"
+    openrouter_model_default: str = "moonshotai/kimi-k2.5"
+    openrouter_model_pro: str = "moonshotai/kimi-k2-thinking"
 
     # --- Voyage AI ---
     voyage_api_key: str = ""
