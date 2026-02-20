@@ -210,6 +210,20 @@ async def approve_draft(draft_id: int, body: DraftApproveBody = DraftApproveBody
                 )
             except Exception as exc:
                 log.warning("feedback_tracking_failed", error=str(exc))
+
+            # Qualitative analysis (async, best effort)
+            try:
+                from agent1.intelligence.feedback_intel import analyze_edit
+                import asyncio
+                asyncio.create_task(analyze_edit(
+                    draft_id=draft_id,
+                    original=draft["draft_body"],
+                    edited=body.edited_body,
+                    sender_domain=_extract_domain(draft["from_address"]),
+                    category=draft["classification"],
+                ))
+            except Exception as exc:
+                log.warning("feedback_intel_trigger_failed", error=str(exc))
         else:
             await conn.execute(
                 """
@@ -240,6 +254,25 @@ async def reject_draft(draft_id: int):
         )
         if result == "UPDATE 0":
             raise HTTPException(status_code=404, detail="Draft not found or not pending")
+
+    # Qualitative rejection analysis (async, best effort)
+    try:
+        pool2 = await get_pool()
+        async with pool2.acquire() as conn2:
+            draft_row = await conn2.fetchrow(
+                "SELECT draft_body, classification FROM email_drafts WHERE id = $1",
+                draft_id,
+            )
+        if draft_row:
+            from agent1.intelligence.feedback_intel import analyze_rejection
+            import asyncio
+            asyncio.create_task(analyze_rejection(
+                draft_id=draft_id,
+                draft_body=draft_row["draft_body"],
+                rejection_reason=None,
+            ))
+    except Exception as exc:
+        log.warning("rejection_intel_trigger_failed", error=str(exc))
 
     log.info("draft_rejected", draft_id=draft_id)
     return {"status": "rejected", "draft_id": draft_id}
