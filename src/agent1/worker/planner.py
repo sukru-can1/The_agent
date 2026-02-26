@@ -7,7 +7,7 @@ from pathlib import Path
 
 from agent1.common.logging import get_logger
 from agent1.common.models import ClassificationResult, Event
-from agent1.common.observability import trace_operation
+from agent1.common.observability import trace_generation, trace_operation
 from agent1.reasoning.providers import get_provider, provider_available
 from agent1.reasoning.router import get_fast_model
 
@@ -17,7 +17,9 @@ PLANNER_PROMPT_PATH = Path(__file__).parent.parent / "reasoning" / "prompts" / "
 try:
     PLANNER_PROMPT = PLANNER_PROMPT_PATH.read_text(encoding="utf-8")
 except FileNotFoundError:
-    PLANNER_PROMPT = "Create a brief JSON plan with intended_actions, tools_needed, reasoning, risks."
+    PLANNER_PROMPT = (
+        "Create a brief JSON plan with intended_actions, tools_needed, reasoning, risks."
+    )
 
 
 @trace_operation("create_plan")
@@ -56,22 +58,31 @@ async def create_plan(event: Event, classification: ClassificationResult) -> dic
         provider = await get_provider()
         response = await provider.generate(
             model=fast_model,
-            messages=[{
-                "role": "user",
-                "content": (
-                    f"Event: {event.event_type} from {event.source.value}\n"
-                    f"Priority: {event.priority}\n"
-                    f"Classification: category={classification.category}, "
-                    f"urgency={classification.urgency}, "
-                    f"complexity={classification.complexity.value}, "
-                    f"involves_vip={classification.involves_vip}, "
-                    f"involves_financial={classification.involves_financial}\n"
-                    f"Payload: {json.dumps(event.payload, default=str)[:1000]}"
-                ),
-            }],
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"Event: {event.event_type} from {event.source.value}\n"
+                        f"Priority: {event.priority}\n"
+                        f"Classification: category={classification.category}, "
+                        f"urgency={classification.urgency}, "
+                        f"complexity={classification.complexity.value}, "
+                        f"involves_vip={classification.involves_vip}, "
+                        f"involves_financial={classification.involves_financial}\n"
+                        f"Payload: {json.dumps(event.payload, default=str)[:1000]}"
+                    ),
+                }
+            ],
             max_tokens=500,
             json_mode=True,
             system=PLANNER_PROMPT,
+        )
+
+        trace_generation(
+            name="planning",
+            model=fast_model,
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
         )
 
         plan = _extract_json(response.text or "")

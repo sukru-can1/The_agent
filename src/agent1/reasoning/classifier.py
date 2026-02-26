@@ -13,15 +13,17 @@ from agent1.common.models import (
     Event,
     Priority,
 )
-from agent1.common.observability import trace_operation
+from agent1.common.observability import trace_generation, trace_operation
 from agent1.reasoning.providers import get_provider, provider_available
 from agent1.reasoning.router import get_fast_model
 
 log = get_logger(__name__)
 
-CLASSIFIER_PROMPT = (Path(__file__).parent / "prompts" / "classifier.md").read_text(
-    encoding="utf-8"
-) if (Path(__file__).parent / "prompts" / "classifier.md").exists() else ""
+CLASSIFIER_PROMPT = (
+    (Path(__file__).parent / "prompts" / "classifier.md").read_text(encoding="utf-8")
+    if (Path(__file__).parent / "prompts" / "classifier.md").exists()
+    else ""
+)
 
 
 def _extract_json(text: str) -> dict:
@@ -147,6 +149,13 @@ async def classify_event(event: Event) -> ClassificationResult:
             max_tokens=500,
             json_mode=True,
             system=CLASSIFIER_PROMPT or "Classify this event. Respond with valid JSON only.",
+        )
+
+        trace_generation(
+            name="classification",
+            model=model,
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
         )
 
         response_text = response.text or ""

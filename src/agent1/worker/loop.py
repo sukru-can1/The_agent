@@ -8,7 +8,7 @@ import time
 from agent1.common.db import get_pool
 from agent1.common.logging import get_logger
 from agent1.common.models import ActionLog, ClassificationResult, Event, EventSource
-from agent1.common.observability import trace_operation
+from agent1.common.observability import trace_generation, trace_operation
 from agent1.common.settings import get_settings
 
 log = get_logger(__name__)
@@ -107,6 +107,7 @@ async def process_event(event: Event) -> None:
     enriched_context = None
     try:
         from agent1.intelligence.context_engine import enrich
+
         enriched_context = await enrich(event, classification)
         if enriched_context and enriched_context.token_estimate > 0:
             log.info(
@@ -136,7 +137,10 @@ async def process_event(event: Event) -> None:
             ActionLog(
                 system=event.source.value,
                 action_type="guardrails_blocked",
-                details={"event_type": event.event_type, "classification": classification.model_dump()},
+                details={
+                    "event_type": event.event_type,
+                    "classification": classification.model_dump(),
+                },
                 outcome="blocked",
             ),
             event_id=str(event.id),
@@ -182,7 +186,9 @@ async def process_event(event: Event) -> None:
                     event.payload.get("sender", "Dashboard"),
                     event.payload.get("text", ""),
                     result.get("result", "")[:5000],
-                    json.dumps({"event_id": str(event.id), "tools_called": result.get("tools_called", [])}),
+                    json.dumps(
+                        {"event_id": str(event.id), "tools_called": result.get("tools_called", [])}
+                    ),
                 )
         except Exception as exc:
             log.warning("dashboard_conversation_store_failed", error=str(exc))
@@ -228,12 +234,14 @@ async def process_event(event: Event) -> None:
     # Step 5.5: Post-action intelligence (NEW)
     try:
         from agent1.intelligence.analytics_engine import check_correlations, track_event
+
         await track_event(event.source.value, event.event_type, classification.category)
 
         correlations = await check_correlations(event.source.value, event.event_type)
         if correlations:
             try:
                 from agent1.tools.google_chat import GChatPostMessageTool
+
                 chat = GChatPostMessageTool()
                 for c in correlations:
                     await chat.execute(
@@ -334,7 +342,9 @@ async def _handle_chat_auto_response(
             # Simple keyword search in knowledge base
             words = [w for w in text.lower().split() if len(w) > 3][:5]
             if words:
-                like_clauses = " OR ".join(f"LOWER(content) LIKE '%' || ${i+1} || '%'" for i in range(len(words)))
+                like_clauses = " OR ".join(
+                    f"LOWER(content) LIKE '%' || ${i + 1} || '%'" for i in range(len(words))
+                )
                 rows = await conn.fetch(
                     f"""
                     SELECT content FROM knowledge
@@ -371,6 +381,13 @@ async def _handle_chat_auto_response(
         answer = (response.text or "").strip()
         input_tokens = response.input_tokens
         output_tokens = response.output_tokens
+
+        trace_generation(
+            name="auto_response",
+            model=flash_model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
 
         # Post reply via Chat
         from agent1.tools.google_chat import GChatReplyAsAgentTool
@@ -465,7 +482,9 @@ async def _handle_summary_event(event: Event, start: float) -> None:
 
     # Build summary message
     title = "Morning Brief" if is_morning else "Daily Summary"
-    sources_str = ", ".join(f"{r['source']}: {r['count']}" for r in top_sources) if top_sources else "none"
+    sources_str = (
+        ", ".join(f"{r['source']}: {r['count']}" for r in top_sources) if top_sources else "none"
+    )
 
     summary = (
         f"**{title}** ({event.payload.get('date', 'today')})\n\n"
@@ -496,7 +515,11 @@ async def _handle_summary_event(event: Event, start: float) -> None:
         ActionLog(
             system="scheduler",
             action_type=event.event_type,
-            details={"events_24h": events_24h, "pending_drafts": pending_drafts, "complaints": complaints_24h},
+            details={
+                "events_24h": events_24h,
+                "pending_drafts": pending_drafts,
+                "complaints": complaints_24h,
+            },
             outcome="success",
             latency_ms=elapsed_ms,
         ),

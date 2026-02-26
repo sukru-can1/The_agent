@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING
 
 from agent1.common.logging import get_logger
 from agent1.common.models import ClassificationResult, Event
-from agent1.common.observability import trace_operation
+from agent1.common.observability import end_span, trace_generation, trace_operation, trace_span
 from agent1.reasoning.providers import get_provider, provider_available
 from agent1.reasoning.router import select_model
-from agent1.tools.registry import execute_tool, get_tool_definitions
+from agent1.tools.registry import execute_tool, get_filtered_tool_definitions
 
 if TYPE_CHECKING:
     from agent1.intelligence.context_engine import EnrichedContext
@@ -41,7 +41,8 @@ async def reason_and_act(
 
     model = await select_model(classification, event)
     provider = await get_provider()
-    tool_defs = get_tool_definitions()
+    tool_defs = get_filtered_tool_definitions(event.source)
+    log.info("tools_filtered", source=event.source.value, tool_count=len(tool_defs))
 
     # Build context message
     context_parts = [
@@ -53,7 +54,20 @@ async def reason_and_act(
     # Language instruction
     lang = classification.detected_language
     if lang and lang != "en":
-        lang_names = {"de": "German", "tr": "Turkish", "fr": "French", "es": "Spanish", "it": "Italian", "nl": "Dutch", "pt": "Portuguese", "pl": "Polish", "ru": "Russian", "ar": "Arabic", "ja": "Japanese", "zh": "Chinese"}
+        lang_names = {
+            "de": "German",
+            "tr": "Turkish",
+            "fr": "French",
+            "es": "Spanish",
+            "it": "Italian",
+            "nl": "Dutch",
+            "pt": "Portuguese",
+            "pl": "Polish",
+            "ru": "Russian",
+            "ar": "Arabic",
+            "ja": "Japanese",
+            "zh": "Chinese",
+        }
         lang_name = lang_names.get(lang, lang.upper())
         context_parts.append(
             f"\n## Language\nThe message is in **{lang_name}** ({lang}). Draft any response in {lang_name} to match the sender's language."
@@ -67,6 +81,7 @@ async def reason_and_act(
     # Inject enriched context (replaces old "last 10 taught rules" approach)
     if enriched_context:
         from agent1.intelligence.context_engine import _format_context
+
         formatted_ctx = _format_context(enriched_context)
         if formatted_ctx:
             context_parts.append(f"\n{formatted_ctx}")
@@ -74,6 +89,7 @@ async def reason_and_act(
         # Fallback: inject recent taught rules (backwards compat)
         try:
             from agent1.common.db import get_pool as _get_pool
+
             pool = await _get_pool()
             async with pool.acquire() as conn:
                 knowledge_rows = await conn.fetch(
@@ -113,6 +129,14 @@ async def reason_and_act(
         total_input += response.input_tokens
         total_output += response.output_tokens
 
+        trace_generation(
+            name=f"reasoning_turn_{turn}",
+            model=model,
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
+            metadata={"turn": turn, "has_tool_calls": bool(response.tool_calls)},
+        )
+
         if not response.tool_calls:
             # LLM is done — return final text
             final_text = response.text or ""
@@ -135,32 +159,41 @@ async def reason_and_act(
             }
 
         # Append assistant message with tool calls
-        messages.append({
-            "role": "assistant",
-            "content": response.text,
-            "tool_calls": [
-                {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
-                for tc in response.tool_calls
-            ],
-        })
+        messages.append(
+            {
+                "role": "assistant",
+                "content": response.text,
+                "tool_calls": [
+                    {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+                    for tc in response.tool_calls
+                ],
+            }
+        )
 
         # Execute tool calls and append results
         for tc in response.tool_calls:
             tools_called.append(tc.name)
             log.info("tool_call", tool=tc.name, input=tc.arguments)
+            span = trace_span(f"tool:{tc.name}")
             try:
                 result = await execute_tool(tc.name, tc.arguments)
-                result_data = json.dumps(result, default=str) if not isinstance(result, str) else result
+                result_data = (
+                    json.dumps(result, default=str) if not isinstance(result, str) else result
+                )
             except Exception as exc:
                 log.exception("tool_execution_error", tool=tc.name)
                 result_data = json.dumps({"error": str(exc)})
+            finally:
+                end_span(span)
 
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "name": tc.name,
-                "content": result_data,
-            })
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "name": tc.name,
+                    "content": result_data,
+                }
+            )
 
     log.warning("reasoning_max_turns_reached", model=model, turns=max_turns)
     return {
