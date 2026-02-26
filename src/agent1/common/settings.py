@@ -99,6 +99,13 @@ class Settings(BaseSettings):
     dedup_ttl_seconds: int = 3600
     lock_ttl_seconds: int = 30
 
+    # --- Sessions ---
+    session_idle_timeout_chat_min: int = 30
+    session_idle_timeout_dashboard_hr: int = 24
+    session_max_history_messages: int = 20
+    session_max_history_tokens: int = 4000
+    session_compaction_threshold: int = 30
+
     # --- Rate limits ---
     rate_limit_emails_per_hour: int = 10
     rate_limit_chat_messages_per_minute: int = 30

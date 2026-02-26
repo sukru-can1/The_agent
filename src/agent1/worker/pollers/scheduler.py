@@ -55,6 +55,13 @@ async def _run_pattern_detection() -> None:
     await detect_patterns()
 
 
+async def _run_session_expiry() -> None:
+    """Expire idle conversation sessions."""
+    from agent1.sessions import expire_idle_sessions
+
+    await expire_idle_sessions()
+
+
 async def _run_feedback_analysis() -> None:
     """Run feedback pattern analysis (edit learning)."""
     from agent1.feedback.analyzer import analyze_edit_patterns
@@ -155,12 +162,14 @@ async def run_scheduler() -> None:
                 _run_starinfinity_poller(),
                 _run_gchat_poller(),
                 _run_pattern_detection(),
+                _run_session_expiry(),
                 return_exceptions=True,
             )
 
             # Log any swallowed poller exceptions
             poller_names = [
-                "gmail", "freshdesk", "feedbacks", "starinfinity", "gchat", "pattern_detection",
+                "gmail", "freshdesk", "feedbacks", "starinfinity", "gchat",
+                "pattern_detection", "session_expiry",
             ]
             for name, result in zip(poller_names, results):
                 if isinstance(result, Exception):

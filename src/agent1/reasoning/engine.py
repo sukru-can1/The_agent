@@ -30,6 +30,7 @@ async def reason_and_act(
     classification: ClassificationResult,
     plan: dict | None = None,
     enriched_context: EnrichedContext | None = None,
+    conversation_history: list[dict] | None = None,
 ) -> dict:
     """Send event to LLM with tools, execute function calls in a loop until done.
 
@@ -109,8 +110,11 @@ async def reason_and_act(
 
     context = "\n".join(context_parts)
 
-    # Build initial messages
-    messages: list[dict] = [{"role": "user", "content": context}]
+    # Build initial messages — prepend conversation history if available
+    messages: list[dict] = []
+    if conversation_history:
+        messages.extend(conversation_history)
+    messages.append({"role": "user", "content": context})
     total_input = 0
     total_output = 0
 

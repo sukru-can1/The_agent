@@ -147,10 +147,59 @@ async def process_event(event: Event) -> None:
         )
         return
 
-    # Step 4: Reason and execute tools
+    # Step 4: Session handling + Reason and execute tools
     from agent1.reasoning.engine import reason_and_act
+    from agent1.sessions import (
+        acquire_session_lock,
+        get_or_create_session,
+        load_session_history,
+        release_session_lock,
+        resolve_session_key,
+        store_session_messages,
+    )
 
-    result = await reason_and_act(event, classification, plan, enriched_context)
+    session_key = resolve_session_key(event)
+    session_id = None
+    session_locked = False
+    conversation_history: list[dict] | None = None
+
+    try:
+        if session_key:
+            session_locked = await acquire_session_lock(session_key)
+            if session_locked:
+                platform = event.source.value
+                user_id = event.payload.get("sender_email", "") or event.payload.get("sender", "")
+                user_name = event.payload.get("sender", "")
+                session_id, is_new = await get_or_create_session(
+                    session_key, platform, user_id, user_name,
+                )
+                if not is_new:
+                    conversation_history = await load_session_history(session_id)
+                    if conversation_history:
+                        log.info(
+                            "session_history_loaded",
+                            event_id=str(event.id),
+                            session_id=str(session_id),
+                            history_messages=len(conversation_history),
+                        )
+            else:
+                log.warning("session_lock_failed_proceeding_without", event_id=str(event.id))
+
+        result = await reason_and_act(
+            event, classification, plan, enriched_context, conversation_history,
+        )
+
+        # Store messages in session after successful reasoning
+        if session_id and isinstance(result, dict):
+            try:
+                user_text = event.payload.get("text", "")
+                assistant_text = result.get("result", "")
+                await store_session_messages(session_id, user_text, assistant_text, event.id)
+            except Exception:
+                log.exception("session_store_failed", event_id=str(event.id))
+    finally:
+        if session_locked and session_key:
+            await release_session_lock(session_key)
 
     # Step 4b: Safety net — if Chat event and Gemini didn't post a reply via tools,
     # post the reasoning result as a Chat message (skip for dashboard-sourced events)
