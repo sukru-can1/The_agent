@@ -67,7 +67,7 @@ MSYS_NO_PATHCONV=1 /c/Users/LENOVO/AppData/Roaming/npm/railway.cmd up           
 
 **Worker** (`src/agent1/worker/`) — Asyncio event loop.
 - Consumer: dequeues events from Redis, processes up to 5 concurrently through AI pipeline
-- Pollers: background jobs — Gmail (5min), Freshdesk (2min), GChat DMs (5min), StarInfinity, Feedbacks
+- Pollers: background jobs — Gmail (5min), Freshdesk (2min), GChat DMs (5min), StarInfinity, Feedbacks, Google Drive
 - Scheduler: cron-like tasks — pattern detection, feedback analysis, morning brief (06:00 UTC), daily summary (18:00 UTC)
 
 Both use `entrypoint.sh` which runs migrations on startup and starts based on `SERVICE_MODE` env var.
@@ -106,6 +106,13 @@ Swappable between Gemini and OpenRouter at runtime via Redis key (`agent1:llm_pr
 
 Selection logic: VIP/financial → Pro. Chat needing response → Default (Pro if complex). Otherwise by complexity.
 
+### Reasoning Prompts (`reasoning/prompts/`)
+
+- `classifier.md`: system prompt for event classification (used by `classifier.py`)
+- `planner.md`: system prompt for action planning (used by `planner.py`)
+- `ops_playbook.md`: main system prompt for the reasoning engine (loaded by `engine.py`). If missing, engine falls back gracefully with empty string
+- Engine also injects taught rules from `knowledge` table (categories: `taught_rule`, `edit_pattern`, `approved_rule`) into every reasoning call
+
 ### Queue System (`queue/`)
 
 - **Redis sorted set** (`agent1:queue:events`): score = `priority.value * 1e12 + timestamp_ms`
@@ -138,6 +145,31 @@ Five hardcoded business rules:
 
 Rate limits in `rate_limits.py`: per-source (gmail 100/hr, freshdesk 200/hr, gchat 300/hr), global 500/hr, per-tool limits.
 
+### Intelligence Layer (`intelligence/`)
+
+Post-reasoning intelligence that runs after each event is processed:
+- **Context Engine** (`context_engine.py`): pre-reasoning pgvector retrieval — finds similar incidents, relevant knowledge, and edit patterns to prepend to LLM context
+- **Analytics Engine** (`analytics_engine.py`): `track_event()` + `check_correlations()` — detects cross-source patterns, maintains baseline metrics, updates hourly/daily aggregates
+- **Proposals** (`proposals.py`): `generate_proposals()` — surfaces improvement suggestions (new rules, automations, tool ideas) based on recurring patterns
+- **Solutions** (`solutions/`): `SolutionFactory`, `script_runner.py` (sandboxed execution), `mcp_discovery.py` (auto-discover MCP tools)
+
+### Contextual Tool Filtering (`tools/groups.py`)
+
+Not all 29+ tools are sent on every LLM call. Tools are grouped and filtered by event source:
+- `ALWAYS_INCLUDED = ["memory", "gchat_agent"]` — sent on every call
+- `SOURCE_GROUPS` maps each `EventSource` to relevant tool groups (e.g., `gmail` → `["gmail", "freshdesk", "starinfinity"]`)
+- `CREDENTIAL_REQUIREMENTS` gates groups by env var presence (no API key = group excluded)
+- `dashboard` and `admin` sources get ALL groups
+
+### Google Drive Monitoring (`worker/pollers/drive_poller.py`)
+
+Watches specific files and folders for changes, configured via dashboard Settings page:
+- Watch list stored in `config` table under key `drive_watch_urls`
+- Redis-backed mtime tracking: `agent1:drive:mtime:{file_id}`, `agent1:drive:folder_files:{folder_id}` (7d TTL)
+- First observation stored silently (no event flood on initial setup)
+- Publishes `drive_file_changed` and `drive_new_file` events with `EventSource.GDRIVE`
+- Admin API: `GET/POST /admin/drive-watches`, `DELETE /admin/drive-watches/{id}`
+
 ### GChat DM Monitoring (`worker/pollers/gchat_poller.py`)
 
 When `GCHAT_POLL_ALL_DMS=true`:
@@ -163,14 +195,14 @@ Key column names: `active` (not `is_active`), `confidence` (not `version`) on kn
 ### Adding a New Tool
 Subclass `BaseTool` in `tools/`, implement `name`, `description`, `input_schema`, `execute()`. Register in `register_all_tools()` in `tools/registry.py`.
 
-### Native Tools (27+)
+### Native Tools (29)
 - **Gmail** (5): get_new_emails, get_email, draft_reply, send_approved, label_email
 - **Google Chat Agent** (3): post_message, reply_as_agent, get_messages — `_resolve_space()` maps friendly names ('alerts', 'log', 'summary', 'dm') to IDs
 - **Google Chat User** (2): reply_as_user, list_my_spaces — acts as Sukru via OAuth
 - **Google Drive** (2): search, read_document (Docs→text, Sheets→CSV, PDFs→extracted)
 - **Freshdesk** (4): get_tickets, get_ticket, add_note, update_ticket
 - **StarInfinity** (4): list_boards, get_tasks, create_task, update_task
-- **Feedbacks** (4): get_customer_responses, get_recent_complaints, get_csat_summary, get_trustpilot_reviews
+- **Feedbacks** (7): get_survey_responses, get_insights, get_overview, get_trustpilot_reviews, get_tasks, start_auto_reporter, trigger_trustpilot_sync
 - **Memory** (3): search (pgvector cosine), store_incident, store_knowledge
 - **Chat Cards**: build_draft_approval_card, build_alert_card (Card V2 with action buttons)
 
@@ -187,7 +219,7 @@ Subclass `BaseTool` in `tools/`, implement `name`, `description`, `input_schema`
 - **Analytics** (`analytics/`): costs, approval rate, response time, token usage
 - **Knowledge** (`knowledge/`): browse/teach rules
 - **Proposals** (`proposals/`): intelligence proposals review
-- **Settings** (`settings/`): integrations, runtime config, test injection
+- **Settings** (`settings/`): integrations, Drive monitoring (add/remove watch URLs), runtime config, test injection
 
 ### Key Components
 - `ChatPanel.tsx`: floating pill (bottom-left, 3D mouse-reactive animation) + expandable chat panel
