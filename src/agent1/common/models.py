@@ -41,6 +41,7 @@ class EventSource(StrEnum):
     SCHEDULER = "scheduler"
     ADMIN = "admin"
     DASHBOARD = "dashboard"
+    GDRIVE = "gdrive"
 
 
 # --- Classification ---

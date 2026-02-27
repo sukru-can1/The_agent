@@ -1,6 +1,6 @@
 "use client";
 
-import { Mail, MessageSquare, Headphones, Star, Database, Compass, BarChart3, Wrench } from "lucide-react";
+import { Mail, MessageSquare, Headphones, Star, Database, Compass, BarChart3, Wrench, HardDrive } from "lucide-react";
 import type { Integration } from "@/lib/types";
 
 const iconMap: Record<string, React.ElementType> = {
@@ -12,6 +12,7 @@ const iconMap: Record<string, React.ElementType> = {
   voyage: Compass,
   langfuse: BarChart3,
   mcp: Wrench,
+  gdrive: HardDrive,
 };
 
 const descMap: Record<string, string> = {
@@ -23,6 +24,7 @@ const descMap: Record<string, string> = {
   voyage: "AI-powered semantic search embeddings",
   langfuse: "LLM observability and cost tracking",
   mcp: "Model Context Protocol dynamic tools",
+  gdrive: "Google Drive file and folder change monitoring",
 };
 
 export default function IntegrationCard({ integration }: { integration: Integration }) {

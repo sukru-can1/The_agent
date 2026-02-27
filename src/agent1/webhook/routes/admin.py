@@ -1127,7 +1127,129 @@ async def list_integrations():
         {"id": "voyage", "name": "Voyage AI", "active": bool(settings.voyage_api_key)},
         {"id": "langfuse", "name": "LangFuse", "active": bool(settings.langfuse_public_key)},
         {"id": "mcp", "name": "MCP Tools", "active": settings.dynamic_tools_enabled},
+        {"id": "gdrive", "name": "Drive Monitoring", "active": bool(settings.google_refresh_token)},
     ]
+
+
+# --- Drive Watches ---
+
+
+class DriveWatchBody(BaseModel):
+    url: str
+
+
+@router.get("/drive-watches")
+async def list_drive_watches():
+    """List monitored Drive file/folder URLs."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchval("SELECT value FROM config WHERE key = 'drive_watch_urls'")
+
+    if not row:
+        return []
+
+    try:
+        return json.loads(row)
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+@router.post("/drive-watches")
+async def add_drive_watch(body: DriveWatchBody):
+    """Add a Drive file or folder URL to watch list."""
+    from agent1.worker.pollers.drive_poller import get_file_name, parse_drive_url
+
+    parsed = parse_drive_url(body.url)
+    if not parsed:
+        raise HTTPException(400, "Invalid Google Drive URL")
+
+    resource_id, kind = parsed
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchval("SELECT value FROM config WHERE key = 'drive_watch_urls'")
+
+    watches: list[dict] = []
+    if row:
+        try:
+            watches = json.loads(row)
+        except (json.JSONDecodeError, TypeError):
+            watches = []
+
+    # Check for duplicate
+    for w in watches:
+        existing = parse_drive_url(w.get("url", ""))
+        if existing and existing[0] == resource_id:
+            raise HTTPException(409, "Already monitoring this resource")
+
+    # Fetch name from Drive API for label
+    from agent1.google_auth.auth import get_drive_service
+
+    label = ""
+    service = get_drive_service()
+    if service:
+        label = await get_file_name(service, resource_id)
+
+    entry = {
+        "id": resource_id,
+        "url": body.url,
+        "kind": kind,
+        "label": label or resource_id,
+    }
+    watches.append(entry)
+
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO config (key, value, updated_at)
+            VALUES ('drive_watch_urls', $1, NOW())
+            ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()
+            """,
+            json.dumps(watches),
+        )
+
+    log.info("drive_watch_added", url=body.url, kind=kind, label=label)
+    return entry
+
+
+@router.delete("/drive-watches/{resource_id}")
+async def remove_drive_watch(resource_id: str):
+    """Remove a Drive watch by resource ID."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchval("SELECT value FROM config WHERE key = 'drive_watch_urls'")
+
+    if not row:
+        raise HTTPException(404, "Watch not found")
+
+    try:
+        watches: list[dict] = json.loads(row)
+    except (json.JSONDecodeError, TypeError):
+        raise HTTPException(404, "Watch not found")
+
+    original_len = len(watches)
+    watches = [w for w in watches if w.get("id") != resource_id]
+
+    if len(watches) == original_len:
+        raise HTTPException(404, "Watch not found")
+
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO config (key, value, updated_at)
+            VALUES ('drive_watch_urls', $1, NOW())
+            ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()
+            """,
+            json.dumps(watches),
+        )
+
+    # Clean up Redis keys
+    redis = await get_redis()
+    await redis.delete(f"agent1:drive:mtime:{resource_id}")
+    await redis.delete(f"agent1:drive:folder_files:{resource_id}")
+
+    log.info("drive_watch_removed", resource_id=resource_id)
+    return {"ok": True}
 
 
 # --- Proposals ---

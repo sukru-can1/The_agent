@@ -48,6 +48,13 @@ async def _run_gchat_poller() -> None:
     await poll_gchat()
 
 
+async def _run_drive_poller() -> None:
+    """Poll Google Drive for changes to watched files/folders."""
+    from agent1.worker.pollers.drive_poller import poll_drive
+
+    await poll_drive()
+
+
 async def _run_pattern_detection() -> None:
     """Run pattern detection checks."""
     from agent1.worker.pattern_detector import detect_patterns
@@ -161,6 +168,7 @@ async def run_scheduler() -> None:
                 _run_feedbacks_poller(),
                 _run_starinfinity_poller(),
                 _run_gchat_poller(),
+                _run_drive_poller(),
                 _run_pattern_detection(),
                 _run_session_expiry(),
                 return_exceptions=True,
@@ -169,7 +177,7 @@ async def run_scheduler() -> None:
             # Log any swallowed poller exceptions
             poller_names = [
                 "gmail", "freshdesk", "feedbacks", "starinfinity", "gchat",
-                "pattern_detection", "session_expiry",
+                "drive", "pattern_detection", "session_expiry",
             ]
             for name, result in zip(poller_names, results):
                 if isinstance(result, Exception):

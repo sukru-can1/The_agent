@@ -81,6 +81,7 @@ SOURCE_GROUPS: dict[str, list[str]] = {
     "starinfinity": ["starinfinity", "freshdesk"],
     "feedbacks": ["feedbacks", "gchat_user"],
     "scheduler": ["gmail", "freshdesk", "feedbacks", "starinfinity"],
+    "gdrive": ["google_drive", "gmail", "gchat_user"],
     "dashboard": list(TOOL_GROUPS.keys()),  # ALL groups
     "admin": list(TOOL_GROUPS.keys()),  # ALL groups
 }

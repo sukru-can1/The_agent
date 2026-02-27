@@ -41,6 +41,11 @@ def _extract_event_summary(event: Event) -> str:
     if src == "dashboard":
         text = str(p.get("text", ""))[:120]
         return f"Dashboard: {text}" if text else event.event_type
+    if src == "gdrive":
+        fname = p.get("file_name", "")
+        change = p.get("change_type", "changed")
+        who = p.get("modified_by", "")
+        return f"Drive: {fname} {change} by {who}" if fname else event.event_type
     return event.event_type
 
 

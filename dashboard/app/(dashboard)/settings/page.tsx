@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Wrench, Send, Cpu } from "lucide-react";
+import { Wrench, Send, Cpu, HardDrive, X, FolderOpen, FileText, Plus } from "lucide-react";
 import IntegrationCard from "@/components/cards/IntegrationCard";
 import type { Integration } from "@/lib/types";
 
@@ -18,6 +18,13 @@ interface LLMProviderInfo {
   models: { flash: string; fast: string; default: string; pro: string };
 }
 
+interface DriveWatch {
+  id: string;
+  url: string;
+  kind: "file" | "folder";
+  label: string;
+}
+
 export default function SettingsPage() {
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [config, setConfig] = useState<ConfigEntry[]>([]);
@@ -27,17 +34,23 @@ export default function SettingsPage() {
   const [injectText, setInjectText] = useState("");
   const [injecting, setInjecting] = useState(false);
   const [injected, setInjected] = useState(false);
+  const [driveWatches, setDriveWatches] = useState<DriveWatch[]>([]);
+  const [newDriveUrl, setNewDriveUrl] = useState("");
+  const [addingDrive, setAddingDrive] = useState(false);
+  const [driveError, setDriveError] = useState("");
 
   const fetchData = useCallback(async () => {
     try {
-      const [intRes, cfgRes, llmRes] = await Promise.all([
+      const [intRes, cfgRes, llmRes, dwRes] = await Promise.all([
         fetch("/api/admin/integrations"),
         fetch("/api/admin/config"),
         fetch("/api/admin/llm-provider"),
+        fetch("/api/admin/drive-watches"),
       ]);
       if (intRes.ok) setIntegrations(await intRes.json());
       if (cfgRes.ok) setConfig(await cfgRes.json());
       if (llmRes.ok) setLlmProvider(await llmRes.json());
+      if (dwRes.ok) setDriveWatches(await dwRes.json());
     } catch {
       // API not available
     }
@@ -94,6 +107,42 @@ export default function SettingsPage() {
       // ignore
     }
     setSwitching(false);
+  };
+
+  const handleAddDriveWatch = async () => {
+    const url = newDriveUrl.trim();
+    if (!url) return;
+    setAddingDrive(true);
+    setDriveError("");
+    try {
+      const res = await fetch("/api/admin/drive-watches", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      if (res.ok) {
+        const entry = await res.json();
+        setDriveWatches((prev) => [...prev, entry]);
+        setNewDriveUrl("");
+      } else {
+        const err = await res.json().catch(() => ({ detail: "Failed to add" }));
+        setDriveError(err.detail || "Failed to add watch");
+      }
+    } catch {
+      setDriveError("Network error");
+    }
+    setAddingDrive(false);
+  };
+
+  const handleRemoveDriveWatch = async (resourceId: string) => {
+    try {
+      const res = await fetch(`/api/admin/drive-watches/${resourceId}`, { method: "DELETE" });
+      if (res.ok) {
+        setDriveWatches((prev) => prev.filter((w) => w.id !== resourceId));
+      }
+    } catch {
+      // ignore
+    }
   };
 
   return (
@@ -156,6 +205,82 @@ export default function SettingsPage() {
           {integrations.length === 0 && (
             <p className="text-sm text-[var(--color-text-dim)] col-span-2">
               Unable to load integrations
+            </p>
+          )}
+        </div>
+      </section>
+
+      {/* Drive Monitoring */}
+      <section>
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-3">
+          Drive Monitoring
+        </h2>
+        <div className="p-4 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] space-y-3">
+          {driveWatches.length > 0 && (
+            <div className="space-y-2">
+              {driveWatches.map((w) => (
+                <div
+                  key={w.id}
+                  className="flex items-center gap-3 px-3 py-2 rounded-md bg-[var(--color-bg)]"
+                >
+                  {w.kind === "folder" ? (
+                    <FolderOpen size={14} className="text-indigo-400 shrink-0" />
+                  ) : (
+                    <FileText size={14} className="text-emerald-400 shrink-0" />
+                  )}
+                  <span
+                    className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                      w.kind === "folder"
+                        ? "bg-indigo-500/10 text-indigo-400"
+                        : "bg-emerald-500/10 text-emerald-400"
+                    }`}
+                  >
+                    {w.kind}
+                  </span>
+                  <span className="text-xs text-[var(--color-text)] truncate flex-1" title={w.url}>
+                    {w.label}
+                  </span>
+                  <button
+                    onClick={() => handleRemoveDriveWatch(w.id)}
+                    className="p-1 rounded hover:bg-[var(--color-surface-hover)] text-[var(--color-text-dim)] hover:text-red-400 transition-colors"
+                    title="Remove watch"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex items-center gap-3">
+            <HardDrive size={16} className="text-[var(--color-text-dim)] shrink-0" />
+            <input
+              type="text"
+              value={newDriveUrl}
+              onChange={(e) => { setNewDriveUrl(e.target.value); setDriveError(""); }}
+              onKeyDown={(e) => e.key === "Enter" && handleAddDriveWatch()}
+              placeholder="Paste a Google Drive file or folder URL..."
+              className="flex-1 bg-transparent text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-dim)] focus:outline-none"
+              disabled={addingDrive}
+            />
+            <button
+              onClick={handleAddDriveWatch}
+              disabled={!newDriveUrl.trim() || addingDrive}
+              className="px-3 py-1.5 rounded-md text-xs font-medium bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-white transition-all btn-press disabled:opacity-40 flex items-center gap-1.5"
+            >
+              {addingDrive ? (
+                <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <Plus size={12} />
+              )}
+              Add
+            </button>
+          </div>
+          {driveError && (
+            <p className="text-xs text-red-400">{driveError}</p>
+          )}
+          {driveWatches.length === 0 && !driveError && (
+            <p className="text-[11px] text-[var(--color-text-dim)]">
+              No files or folders being watched. Add a Google Drive URL to start monitoring changes.
             </p>
           )}
         </div>

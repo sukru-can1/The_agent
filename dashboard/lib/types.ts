@@ -97,6 +97,7 @@ export function getCategory(source: string, eventType: string): Category {
   if (eventType.includes("campaign") || eventType.includes("marketing")) return "marketing";
   if (source === "gmail") return "operations";
   if (source === "gchat") return "operations";
+  if (source === "gdrive") return "operations";
   return "system";
 }
 
@@ -117,6 +118,12 @@ export function extractDetail(source: string, payload: Record<string, unknown> |
   }
   if (source === "feedbacks") {
     return `${payload.customer_email ?? ""} — Rating: ${payload.rating ?? ""}`;
+  }
+  if (source === "gdrive") {
+    const fname = payload.file_name ?? "";
+    const change = payload.change_type ?? "changed";
+    const who = payload.modified_by ?? "";
+    return `${fname} ${change} by ${who}`;
   }
   return JSON.stringify(payload).slice(0, 150);
 }
