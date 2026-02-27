@@ -201,13 +201,22 @@ async def process_event(event: Event) -> None:
         if session_locked and session_key:
             await release_session_lock(session_key)
 
-    # Step 4b: Safety net — if Chat event and Gemini didn't post a reply via tools,
-    # post the reasoning result as a Chat message (skip for dashboard-sourced events)
+    # Step 4b: Safety net — if Chat event and LLM didn't post a reply via tools,
+    # post the reasoning result as a Chat message.
+    # Skip for: dashboard events, polled DMs (agent should notify Sukru, not reply in
+    # someone else's DM space), and events where the LLM already replied via tools.
+    is_polled_dm = event.payload.get("polled_dm", False)
+    already_replied = isinstance(result, dict) and any(
+        t in result.get("tools_called", [])
+        for t in ("gchat_reply_as_agent", "gchat_post_message")
+    )
     if (
         event.source == EventSource.GCHAT
         and classification.needs_response
         and isinstance(result, dict)
         and result.get("result")
+        and not already_replied
+        and not is_polled_dm
     ):
         try:
             from agent1.tools.google_chat import GChatReplyAsAgentTool

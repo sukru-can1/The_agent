@@ -22,6 +22,6 @@ Rules:
 - Messages containing "from now on", "remember", "always", "never" directed at the agent = is_teachable_rule true
 - Detect language from the main text content, defaulting to "en" if unclear
 - Google Chat messages (source="gchat", event_type="chat_message") are ALWAYS needs_response=true — these are people talking directly to the agent bot. Classify as "simple_question" or "internal_request", NEVER as "spam"
-- Google Chat user messages (event_type="chat_user_message") are also ALWAYS needs_response=true — these are people messaging in team spaces
+- Google Chat user messages (event_type="chat_user_message") with polled_dm=true are DMs to Sukru picked up by monitoring. Set needs_response=true but the response goes to Sukru (not the DM sender). Classify based on the DM content
 
 Respond with ONLY valid JSON, no explanation.

@@ -79,34 +79,37 @@ async def reason_and_act(
             f"\n## Plan\n- Actions: {', '.join(plan.get('intended_actions', []))}\n- Reasoning: {plan.get('reasoning', '')}"
         )
 
-    # Inject enriched context (replaces old "last 10 taught rules" approach)
+    # Inject enriched context (similar incidents, relevant knowledge from vector search)
     if enriched_context:
         from agent1.intelligence.context_engine import _format_context
 
         formatted_ctx = _format_context(enriched_context)
         if formatted_ctx:
             context_parts.append(f"\n{formatted_ctx}")
-    else:
-        # Fallback: inject recent taught rules (backwards compat)
-        try:
-            from agent1.common.db import get_pool as _get_pool
 
-            pool = await _get_pool()
-            async with pool.acquire() as conn:
-                knowledge_rows = await conn.fetch(
-                    """
-                    SELECT content FROM knowledge
-                    WHERE active = true
-                      AND category IN ('taught_rule', 'edit_pattern', 'approved_rule')
-                    ORDER BY created_at DESC
-                    LIMIT 10
-                    """
+    # ALWAYS inject taught rules — these are explicit user instructions, not dependent on
+    # embedding similarity. They must be present in every LLM call.
+    try:
+        from agent1.common.db import get_pool as _get_pool
+
+        pool = await _get_pool()
+        async with pool.acquire() as conn:
+            taught_rows = await conn.fetch(
+                """
+                SELECT content FROM knowledge
+                WHERE active = true
+                  AND category IN ('taught_rule', 'edit_pattern', 'approved_rule')
+                ORDER BY created_at DESC
+                LIMIT 20
+                """
+            )
+            if taught_rows:
+                rules = "\n".join(f"- {r['content']}" for r in taught_rows)
+                context_parts.append(
+                    f"\n## Your Standing Instructions (from Sukru)\n{rules}"
                 )
-                if knowledge_rows:
-                    rules = "\n".join(f"- {r['content']}" for r in knowledge_rows)
-                    context_parts.append(f"\n## Learned Rules\n{rules}")
-        except Exception:
-            pass
+    except Exception:
+        pass
 
     context = "\n".join(context_parts)
 

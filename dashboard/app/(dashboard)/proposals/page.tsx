@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Lightbulb, Check, X, ChevronDown, ChevronRight, Code2, Clock } from "lucide-react";
+import { Lightbulb, Check, X, ChevronDown, ChevronRight, Code2, Clock, Loader2 } from "lucide-react";
 import type { Proposal } from "@/lib/types";
 import { PROPOSAL_TYPE_CONFIG, timeAgo } from "@/lib/types";
 
@@ -10,6 +10,7 @@ export default function ProposalsPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"pending" | "approved" | "rejected">("pending");
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   const toggleExpand = (id: string) => {
     setExpandedIds((prev) => {
@@ -38,17 +39,27 @@ export default function ProposalsPage() {
   }, [fetchProposals]);
 
   const handleApprove = async (id: string) => {
-    const res = await fetch(`/api/admin/proposals/${id}/approve`, { method: "POST" });
-    if (res.ok) fetchProposals();
+    setActionLoading(id);
+    try {
+      const res = await fetch(`/api/admin/proposals/${id}/approve`, { method: "POST" });
+      if (res.ok) await fetchProposals();
+    } finally {
+      setActionLoading(null);
+    }
   };
 
   const handleReject = async (id: string) => {
-    const res = await fetch(`/api/admin/proposals/${id}/reject`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reason: "Rejected from dashboard" }),
-    });
-    if (res.ok) fetchProposals();
+    setActionLoading(id);
+    try {
+      const res = await fetch(`/api/admin/proposals/${id}/reject`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: "Rejected from dashboard" }),
+      });
+      if (res.ok) await fetchProposals();
+    } finally {
+      setActionLoading(null);
+    }
   };
 
   return (
@@ -117,14 +128,16 @@ export default function ProposalsPage() {
                     <div className="flex items-center gap-1 ml-2" onClick={(e) => e.stopPropagation()}>
                       <button
                         onClick={() => handleApprove(p.id)}
-                        className="p-1.5 rounded hover:bg-emerald-500/20 text-emerald-400 transition-colors"
+                        disabled={actionLoading === p.id}
+                        className="p-1.5 rounded hover:bg-emerald-500/20 text-emerald-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         title="Approve"
                       >
-                        <Check size={14} />
+                        {actionLoading === p.id ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
                       </button>
                       <button
                         onClick={() => handleReject(p.id)}
-                        className="p-1.5 rounded hover:bg-red-500/20 text-red-400 transition-colors"
+                        disabled={actionLoading === p.id}
+                        className="p-1.5 rounded hover:bg-red-500/20 text-red-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         title="Reject"
                       >
                         <X size={14} />

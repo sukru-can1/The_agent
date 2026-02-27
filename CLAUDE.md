@@ -39,7 +39,9 @@ uv run ruff check src/            # lint
 uv run ruff check --fix src/      # lint + autofix
 uv run ruff format src/           # format
 uv run mypy src/agent1/ --strict  # type check
-uv run pytest -v                  # tests (asyncio_mode=auto configured)
+uv run pytest -v                  # all tests (asyncio_mode=auto configured)
+uv run pytest tests/unit/test_sessions.py -v          # single test file
+uv run pytest tests/unit/test_sessions.py::test_resolve_gchat_with_space_and_thread -v  # single test
 
 # Dashboard
 cd dashboard && npm run dev       # dev server (Turbopack)
@@ -80,7 +82,7 @@ Event source → Redis sorted set (scored by priority*1e12 + timestamp)
     → Step 1c: Scheduled summaries → aggregate stats, post to Chat
     → Step 2: Plan (for moderate/complex events)
     → Step 3: Guardrails (business rules + rate limits)
-    → Step 4: Reason + tools (multi-turn function calling, up to 10 turns)
+    → Step 4: Session handling (GChat/Dashboard only) → Reason + tools (multi-turn function calling, up to 10 turns)
     → Step 5: Log action → Update event status → Post-action intelligence
 ```
 
@@ -112,6 +114,18 @@ Selection logic: VIP/financial → Pro. Chat needing response → Default (Pro i
 - **Dedup** (`agent1:dedup:{source}:{id}`): prevents duplicate processing, configurable TTL
 - **DLQ**: after `queue_max_retries` (default 3), moves to `dead_letter_events` table + alerts Chat
 - **Consumer**: 5 concurrent workers via `asyncio.wait(FIRST_COMPLETED)`
+- **Session lock** (`agent1:session:lock:{key}`): SET NX EX 60 — serializes concurrent messages in same GChat thread
+
+### Conversation Sessions (`sessions/`)
+
+Thread-based LLM memory for GChat and Dashboard. Other sources (Gmail, Freshdesk, etc.) remain stateless.
+
+- **Session key**: `gchat:{space}:{thread}` for threaded messages, `gchat:{space}` for DMs, `dashboard:{email}` for Dashboard
+- **Lifecycle**: resolve key → acquire Redis lock → get/create session → load history → reason with history prepended → store exchange → release lock
+- **History**: loads last 20 user+assistant messages (text only, no tool calls), trims to 4000-token budget, prepended before the current enriched context message
+- **Compaction**: at 30+ messages, oldest are summarised via flash model and pruned (keeps last 10)
+- **Expiry**: GChat sessions idle >30 min, Dashboard sessions idle >24h or past daily 04:00 UTC reset
+- **Zero-regression**: `resolve_session_key()` returns `None` for non-conversational sources → entire session block is skipped
 
 ### Guardrails (`guardrails/rules.py`)
 
@@ -135,11 +149,12 @@ When `GCHAT_POLL_ALL_DMS=true`:
 
 ## Database
 
-Schema across 4 migrations in `migrations/`:
+Schema across 5 migrations in `migrations/`:
 - `001_initial_schema.sql`: events, dead_letter_events, actions_log, incidents, knowledge, conversations, email_drafts, draft_feedback, agent_metrics, config
 - `002_add_vector_columns.sql`: pgvector `vector(1024)` columns + HNSW indexes on actions_log, incidents, knowledge
 - `003_dynamic_tools.sql`: dynamic_tools table for agent-created tools
 - `004_intelligence.sql`: proposals, solutions, automations, baselines tables
+- `005_sessions.sql`: sessions + session_messages tables for conversation continuity
 
 Key column names: `active` (not `is_active`), `confidence` (not `version`) on knowledge table.
 

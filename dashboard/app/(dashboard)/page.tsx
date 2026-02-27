@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Layers, Inbox, Zap, DollarSign, Power, Play } from "lucide-react";
+import { Layers, Inbox, Zap, DollarSign, Power, Play, Loader2 } from "lucide-react";
 import MetricTile from "@/components/cards/MetricTile";
 import DecisionCard from "@/components/cards/DecisionCard";
 import EditModal from "@/components/EditModal";
@@ -44,6 +44,7 @@ export default function CommandCenter() {
   const [actions, setActions] = useState<AgentAction[]>([]);
   const [editingDraft, setEditingDraft] = useState<Draft | null>(null);
   const [refiningDraftId, setRefiningDraftId] = useState<number | null>(null);
+  const [pausing, setPausing] = useState(false);
 
   const fetchAll = useCallback(async () => {
     try {
@@ -79,9 +80,14 @@ export default function CommandCenter() {
   const isPaused = status?.is_paused ?? false;
 
   const togglePause = async () => {
-    const endpoint = isPaused ? "/api/admin/queue/resume" : "/api/admin/queue/pause";
-    await fetch(endpoint, { method: "POST" });
-    fetchAll();
+    setPausing(true);
+    try {
+      const endpoint = isPaused ? "/api/admin/queue/resume" : "/api/admin/queue/pause";
+      await fetch(endpoint, { method: "POST" });
+      await fetchAll();
+    } finally {
+      setPausing(false);
+    }
   };
 
   return (
@@ -101,44 +107,53 @@ export default function CommandCenter() {
         </div>
         <button
           onClick={togglePause}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium transition-all btn-press ${
+          disabled={pausing}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium transition-all btn-press disabled:opacity-50 disabled:cursor-not-allowed ${
             isPaused
               ? "bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 border border-emerald-500/30"
               : "bg-red-500/15 text-red-400 hover:bg-red-500/25 border border-red-500/30"
           }`}
         >
-          {isPaused ? <Play size={14} /> : <Power size={14} />}
+          {pausing ? <Loader2 size={14} className="animate-spin" /> : isPaused ? <Play size={14} /> : <Power size={14} />}
           {isPaused ? "Resume Agent" : "Pause Agent"}
         </button>
       </div>
 
       {/* Metric tiles */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <MetricTile
-          icon={Layers}
-          label="Queue"
-          value={status?.queue_depth ?? 0}
-          color="bg-indigo-500/10 text-indigo-400"
-        />
-        <MetricTile
-          icon={Inbox}
-          label="Drafts"
-          value={status?.pending_drafts ?? 0}
-          color="bg-amber-500/10 text-amber-400"
-        />
-        <MetricTile
-          icon={Zap}
-          label="Today"
-          value={actions.length}
-          color="bg-emerald-500/10 text-emerald-400"
-        />
-        <MetricTile
-          icon={DollarSign}
-          label="Cost"
-          value={`$${todayCost.toFixed(2)}`}
-          color="bg-purple-500/10 text-purple-400"
-        />
-      </div>
+      {status === null ? (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="h-20 rounded-lg bg-[var(--color-surface)] animate-pulse" />
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <MetricTile
+            icon={Layers}
+            label="Queue"
+            value={status.queue_depth ?? 0}
+            color="bg-indigo-500/10 text-indigo-400"
+          />
+          <MetricTile
+            icon={Inbox}
+            label="Drafts"
+            value={status.pending_drafts ?? 0}
+            color="bg-amber-500/10 text-amber-400"
+          />
+          <MetricTile
+            icon={Zap}
+            label="Today"
+            value={actions.length}
+            color="bg-emerald-500/10 text-emerald-400"
+          />
+          <MetricTile
+            icon={DollarSign}
+            label="Cost"
+            value={`$${todayCost.toFixed(2)}`}
+            color="bg-purple-500/10 text-purple-400"
+          />
+        </div>
+      )}
 
       {/* Main grid: Decisions (2/3) + Feed (1/3) */}
       <div className="grid lg:grid-cols-3 gap-5">
@@ -155,7 +170,7 @@ export default function CommandCenter() {
               variant="draft"
               category={getCategory("gmail", "email_draft")}
               title={d.subject || "No subject"}
-              subtitle={`From: ${d.from_address}`}
+              subtitle={`To: ${d.from_address}`}
               body={d.draft_body}
               priority={classificationToPriority(d.classification)}
               timestamp={d.created_at}
